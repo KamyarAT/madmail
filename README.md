@@ -1,25 +1,9 @@
-# Madmail - Maddy Chatmail Server
-A mad fork of [maddy](https://github.com/foxcpp/maddy), bringing the madness to mail delivery — optimized for instant, secure messaging with #deltachat.
+# Madmail CLI parity (test / documentation anchor)
 
-## Quick Setup
+This directory holds documentation hooks for **madmail / `maddy` CLI** parity with **`cmrelay`** management commands.
 
-```bash
-curl -fsSL https://github.com/themadorg/madmail/releases/latest/download/madmail-linux-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') -o madmail && chmod +x madmail && sudo ./madmail install --simple --ip YOUR_IP --lang en && sudo systemctl enable madmail && sudo systemctl start madmail
-```
+- Full upstream command and flag reference: [doc/madmail/cli-reference.md](../../doc/madmail/cli-reference.md)
+- Implemented vs stub matrix: [doc/madmail/cmrelay-parity.md](../../doc/madmail/cmrelay-parity.md)
+- Index: [doc/madmail/README.md](../../doc/madmail/README.md)
 
-> Replace `YOUR_IP` with your server's public IP address.
-
-## Documentation
-For installation, configuration, and detailed guides, please refer to the [**Documentation Index**](./docs/index.md).
-
-> [!IMPORTANT]
-> Parts of this project are developed with AI assistance. Read our [**AI Disclosure & Security Model**](./docs/ai-disclosure.md) for more details.
-
-## Resources
-- [GitHub Releases](https://github.com/themadorg/madmail/releases)
-- [Telegram Channel](https://t.me/the_madmail)
-- [**Delta Chat Official Website**](https://delta.chat)
-- [**Download Delta Chat Apps**](https://delta.chat/en/download)
-
-## License
-Licensed under [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.en.html).
+Automated tests for CLI parity are not required here; the authoritative parity source is `src/manager/internal/madmailctl/commands.go` plus individual `newLeafStub("…", "file.go")` references.
