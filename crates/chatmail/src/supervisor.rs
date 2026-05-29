@@ -155,6 +155,7 @@ impl ServerSupervisor {
             credential_policy,
             require_auth: false,
             module: "smtp",
+            starttls_config: None,
         };
         let submission_cfg = SmtpSessionConfig {
             hostname: hostname.clone(),
@@ -164,6 +165,7 @@ impl ServerSupervisor {
             credential_policy,
             require_auth: true,
             module: "submission",
+            starttls_config: None,
         };
         let pool_turn = pool.clone();
         let turn_server =
@@ -189,6 +191,7 @@ impl ServerSupervisor {
             credential_policy,
             turn: turn_discovery,
             iroh: iroh_discovery,
+            starttls_config: None,
         };
 
         let maintenance =
@@ -332,6 +335,7 @@ impl SupervisorInner {
             addrs.smtp.clone(),
             smtp_cancel.clone(),
             None,
+            None,
             Arc::clone(&self.app),
             self.pool.clone(),
             self.smtp_cfg.clone(),
@@ -343,6 +347,7 @@ impl SupervisorInner {
                 addr,
                 cancel.clone(),
                 None,
+                tls_config.clone(),
                 Arc::clone(&self.app),
                 self.pool.clone(),
                 self.submission_cfg.clone(),
@@ -359,6 +364,7 @@ impl SupervisorInner {
                 addr,
                 cancel.clone(),
                 Some(tls),
+                None,
                 Arc::clone(&self.app),
                 self.pool.clone(),
                 self.submission_cfg.clone(),
@@ -372,6 +378,7 @@ impl SupervisorInner {
                 addr,
                 cancel.clone(),
                 None,
+                tls_config.clone(),
                 Arc::clone(&self.app),
                 self.pool.clone(),
                 imap_cfg.clone(),
@@ -388,6 +395,7 @@ impl SupervisorInner {
                 addr,
                 cancel.clone(),
                 Some(tls),
+                None,
                 Arc::clone(&self.app),
                 self.pool.clone(),
                 imap_cfg.clone(),
@@ -640,12 +648,13 @@ fn spawn_smtp(
     addr: String,
     cancel: CancellationToken,
     tls: Option<Arc<ServerConfig>>,
+    starttls: Option<Arc<ServerConfig>>,
     app: Arc<AppState>,
     pool: DbPool,
     cfg: SmtpSessionConfig,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let _ = run_smtp_listener(&addr, cancel, tls, app, pool, cfg).await;
+        let _ = run_smtp_listener(&addr, cancel, tls, starttls, app, pool, cfg).await;
     })
 }
 
@@ -653,12 +662,13 @@ fn spawn_imap(
     addr: String,
     cancel: CancellationToken,
     tls: Option<Arc<ServerConfig>>,
+    starttls: Option<Arc<ServerConfig>>,
     app: Arc<AppState>,
     pool: DbPool,
     cfg: ImapSessionConfig,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let _ = run_imap_listener(&addr, cancel, tls, app, pool, cfg).await;
+        let _ = run_imap_listener(&addr, cancel, tls, starttls, app, pool, cfg).await;
     })
 }
 

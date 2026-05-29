@@ -155,3 +155,8 @@ Configuration drives TLS listeners, submission ports, and certificate automation
 | [3501](https://datatracker.ietf.org/doc/html/rfc3501) | IMAP listener settings | [rfc3501.txt](RFC/rfc3501.txt) |
 | [5321](https://datatracker.ietf.org/doc/html/rfc5321) | SMTP listener settings | [rfc5321.txt](RFC/rfc5321.txt) |
 | [9110](https://datatracker.ietf.org/doc/html/rfc9110) | HTTP listener settings | [rfc9110.txt](RFC/rfc9110.txt) |
+| [8615](https://datatracker.ietf.org/doc/html/rfc8615) | `/.well-known/` URIs (autoconfig path prefix) | [rfc8615.txt](RFC/rfc8615.txt) |
+| [2595](https://datatracker.ietf.org/doc/html/rfc2595) | IMAP STARTTLS on cleartext port 143 | [rfc2595.txt](RFC/rfc2595.txt) |
+| [3207](https://datatracker.ietf.org/doc/html/rfc3207) | SMTP STARTTLS on submission port 587 | [rfc3207.txt](RFC/rfc3207.txt) |
+
+**Autoconfig XML** (`/.well-known/autoconfig/mail/config-v1.1.xml`) is **not** an IETF RFC — it follows the Mozilla ISPDB format; see [`RFC/README.md` — Autoconfig](RFC/README.md#autoconfig-not-an-ietf-rfc).

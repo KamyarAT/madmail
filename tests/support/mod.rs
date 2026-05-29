@@ -125,6 +125,7 @@ pub async fn spawn_mail_servers_opts(dir: &std::path::Path, opts: MailServersOpt
         credential_policy: chatmail_config::CredentialPolicy::default(),
         require_auth: true,
         module: "submission",
+        starttls_config: None,
     };
 
     let pool_smtp = pool.clone();
@@ -203,6 +204,7 @@ pub async fn spawn_mail_servers_opts(dir: &std::path::Path, opts: MailServersOpt
                         credential_policy: chatmail_config::CredentialPolicy::default(),
                         turn,
                         iroh: None,
+                        starttls_config: None,
                     },
                 );
                 let _ = session.handle_connection(stream).await;

@@ -161,6 +161,7 @@ async fn smtp_submission_increments_openmetrics_counters() {
                         credential_policy: chatmail_config::CredentialPolicy::default(),
                         require_auth: true,
                         module: "submission",
+                        starttls_config: None,
                     },
                 );
                 let _ = session.handle_connection(stream).await;

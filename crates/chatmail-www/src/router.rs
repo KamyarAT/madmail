@@ -147,6 +147,10 @@ pub fn www_router(state: WwwState) -> Router {
         .route("/docs/", get(handlers::docs_index))
         .route("/docs/{*path}", get(handlers::docs_path))
         .route("/inv/{*token}", get(handlers::invite_page))
+        .route(
+            "/.well-known/autoconfig/mail/config-v1.1.xml",
+            get(handlers::mail_autoconfig),
+        )
         .route("/", get(handlers::index))
         .route("/{*path}", get(handlers::catch_all))
         .with_state(state)

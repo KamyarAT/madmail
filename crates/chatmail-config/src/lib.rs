@@ -15,6 +15,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+pub mod autoconfig;
 pub mod cli;
 pub mod client_mail;
 pub mod config_www;
@@ -38,6 +39,7 @@ pub use cli::{
     PortCommand, PortServiceCommand, RegistrationCommand, RegistrationTokensCommand,
     ServiceToggleCommand, SharingCommand, TasksCommand, UninstallArgs,
 };
+pub use autoconfig::{build_autoconfig_xml, AutoconfigParams};
 pub use client_mail::{
     build_dclogin_link, client_connect_host, effective_http_listen, effective_http_plain_listen,
     effective_http_tls_listen, effective_imap_listen, effective_imap_plain_listen,

@@ -26,7 +26,11 @@ use chatmail_pgp::{enforce_encryption, EnforceOptions};
 use chatmail_state::AppState;
 use chatmail_storage::deliver_local_messages;
 use chatmail_types::{ChatmailError, Result};
+use rustls::ServerConfig;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
+use tokio_rustls::server::TlsStream;
+use tokio_rustls::TlsAcceptor;
 
 use crate::data_limit::{parse_smtp_size_parameter, read_smtp_data_limited};
 use crate::protocol::{
@@ -44,6 +48,8 @@ pub struct SmtpSessionConfig {
     pub require_auth: bool,
     /// Prometheus label (`smtp` / `submission`), matches Madmail endpoint name.
     pub module: &'static str,
+    /// TLS upgrade on cleartext submission (port 587); not used on implicit-TLS :465.
+    pub starttls_config: Option<Arc<ServerConfig>>,
 }
 
 pub struct SmtpSession {
@@ -69,24 +75,118 @@ impl SmtpSession {
         }
     }
 
-    pub async fn handle_connection<S>(&mut self, stream: S) -> Result<()>
-    where
-        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-    {
-        let (reader, writer) = tokio::io::split(stream);
-        self.serve(reader, writer).await
+    pub async fn handle_connection(&mut self, stream: TcpStream) -> Result<()> {
+        if self.cfg.starttls_config.is_some() {
+            self.serve_with_starttls_upgrade(stream).await
+        } else {
+            let (reader, writer) = tokio::io::split(stream);
+            self.serve(reader, writer, false).await
+        }
     }
 
-    async fn serve<R, W>(&mut self, reader: R, mut writer: W) -> Result<()>
+    pub async fn handle_tls_connection(&mut self, stream: TlsStream<TcpStream>) -> Result<()> {
+        let (reader, writer) = tokio::io::split(stream);
+        self.serve(reader, writer, true).await
+    }
+
+    async fn serve_with_starttls_upgrade(&mut self, stream: TcpStream) -> Result<()> {
+        let (reader, mut writer) = tokio::io::split(stream);
+        let mut lines = BufReader::new(reader);
+
+        writer
+            .write_all(format!("220 {} ESMTP chatmail-rs\r\n", self.cfg.hostname).as_bytes())
+            .await?;
+
+        loop {
+            let mut line = String::new();
+            if lines.read_line(&mut line).await? == 0 {
+                break;
+            }
+            let line = line.trim_end().to_string();
+            if line.is_empty() {
+                continue;
+            }
+            let cmd = line
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_ascii_uppercase();
+            match cmd.as_str() {
+                "EHLO" | "HELO" => {
+                    self.seen_ehlo = true;
+                    writer
+                        .write_all(self.format_ehlo(false).as_bytes())
+                        .await?;
+                }
+                "STARTTLS" => {
+                    let Some(cfg) = self.cfg.starttls_config.clone() else {
+                        writer
+                            .write_all(b"502 5.5.1 STARTTLS not available\r\n")
+                            .await?;
+                        continue;
+                    };
+                    writer
+                        .write_all(b"220 2.0.0 Ready to start TLS\r\n")
+                        .await?;
+                    writer.flush().await?;
+                    let reader = lines.into_inner();
+                    let stream = reader.unsplit(writer);
+                    let acceptor = TlsAcceptor::from(cfg);
+                    let tls = acceptor
+                        .accept(stream)
+                        .await
+                        .map_err(|e| ChatmailError::protocol(format!("STARTTLS failed: {e}")))?;
+                    self.seen_ehlo = false;
+                    return self.handle_tls_connection(tls).await;
+                }
+                "AUTH" if line.to_ascii_uppercase().starts_with("AUTH PLAIN") => {
+                    writer
+                        .write_all(b"530 5.7.0 Must issue a STARTTLS command first\r\n")
+                        .await?;
+                }
+                "QUIT" => {
+                    writer.write_all(b"221 2.0.0 Bye\r\n").await?;
+                    break;
+                }
+                "NOOP" => writer.write_all(b"250 2.0.0 OK\r\n").await?,
+                _ => {
+                    writer
+                        .write_all(b"502 5.5.1 Command not implemented\r\n")
+                        .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn format_ehlo(&self, tls_active: bool) -> String {
+        let mut out = format!("250-{}\r\n", self.cfg.hostname);
+        if !tls_active && self.cfg.starttls_config.is_some() {
+            out.push_str("250-STARTTLS\r\n");
+        }
+        out.push_str(&format!(
+            "250-SIZE {}\r\n",
+            self.ctx.message_size.effective()
+        ));
+        if tls_active || self.cfg.starttls_config.is_none() {
+            out.push_str("250-AUTH PLAIN\r\n");
+        }
+        out.push_str("250 OK\r\n");
+        out
+    }
+
+    async fn serve<R, W>(&mut self, reader: R, mut writer: W, tls_active: bool) -> Result<()>
     where
         R: tokio::io::AsyncRead + Unpin,
         W: AsyncWriteExt + Unpin,
     {
         let mut lines = BufReader::new(reader).lines();
 
-        writer
-            .write_all(format!("220 {} ESMTP chatmail-rs\r\n", self.cfg.hostname).as_bytes())
-            .await?;
+        if !tls_active {
+            writer
+                .write_all(format!("220 {} ESMTP chatmail-rs\r\n", self.cfg.hostname).as_bytes())
+                .await?;
+        }
 
         while let Some(line) = lines.next_line().await? {
             let line = line.trim_end().to_string();
@@ -102,17 +202,27 @@ impl SmtpSession {
                 "EHLO" | "HELO" => {
                     self.seen_ehlo = true;
                     writer
-                        .write_all(
-                            format!(
-                                "250-{}\r\n250-SIZE {}\r\n250-AUTH PLAIN\r\n250 OK\r\n",
-                                self.cfg.hostname,
-                                self.ctx.message_size.effective()
-                            )
-                            .as_bytes(),
-                        )
+                        .write_all(self.format_ehlo(tls_active).as_bytes())
                         .await?;
                 }
+                "STARTTLS" => {
+                    if tls_active {
+                        writer
+                            .write_all(b"503 5.5.1 STARTTLS already active\r\n")
+                            .await?;
+                    } else {
+                        writer
+                            .write_all(b"502 5.5.1 STARTTLS not available\r\n")
+                            .await?;
+                    }
+                }
                 "AUTH" if line.to_ascii_uppercase().starts_with("AUTH PLAIN") => {
+                    if self.cfg.starttls_config.is_some() && !tls_active {
+                        writer
+                            .write_all(b"530 5.7.0 Must issue a STARTTLS command first\r\n")
+                            .await?;
+                        continue;
+                    }
                     let user = match parse_auth_plain(&line) {
                         Ok(u) => u,
                         Err(e) => {
@@ -549,6 +659,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: true,
                 module: "submission",
+                starttls_config: None,
             },
             authenticated_user: None,
             mail_from: String::new(),
@@ -653,6 +764,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: false,
                 module: "smtp",
+                starttls_config: None,
             },
             pool,
             ctx,
@@ -688,6 +800,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: true,
                 module: "submission",
+                starttls_config: None,
             },
             pool,
             ctx,
@@ -719,6 +832,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: false,
                 module: "smtp",
+                starttls_config: None,
             },
             pool,
             ctx,
@@ -758,6 +872,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: true,
                 module: "submission",
+                starttls_config: None,
             },
             pool,
             ctx.clone(),
@@ -809,6 +924,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: true,
                 module: "submission",
+                starttls_config: None,
             },
             pool,
             ctx.clone(),
@@ -865,6 +981,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: false,
                 module: "smtp",
+                starttls_config: None,
             },
             pool,
             ctx,
@@ -908,6 +1025,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: false,
                 module: "smtp",
+                starttls_config: None,
             },
             pool,
             ctx,
@@ -943,6 +1061,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: false,
                 module: "smtp",
+                starttls_config: None,
             },
             pool,
             ctx,
@@ -975,6 +1094,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: false,
                 module: "smtp",
+                starttls_config: None,
             },
             pool,
             ctx.clone(),
@@ -1021,6 +1141,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 require_auth: false,
                 module: "smtp",
+                starttls_config: None,
             },
             pool,
             ctx.clone(),
@@ -1043,5 +1164,147 @@ mod tests {
                 .map(|d| d.count())
                 .unwrap_or(0);
         assert_eq!(n, 0);
+    }
+
+    fn loopback_tls_configs() -> (Arc<ServerConfig>, Arc<rustls::ClientConfig>) {
+        use rcgen::generate_simple_self_signed;
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+        use rustls::{ClientConfig, RootCertStore};
+
+        let rc = generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let cert = CertificateDer::from(rc.cert.der().to_vec());
+        let key = PrivateKeyDer::Pkcs8(rc.key_pair.serialize_der().into());
+        let server = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(vec![cert.clone()], key)
+                .unwrap(),
+        );
+        let mut roots = RootCertStore::empty();
+        roots.add(cert).unwrap();
+        let client = Arc::new(
+            ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        );
+        (server, client)
+    }
+
+    async fn read_smtp_until<S>(stream: &mut S, needle: &str) -> String
+    where
+        S: AsyncReadExt + Unpin,
+    {
+        let mut buf = [0u8; 4096];
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let mut acc = String::new();
+            loop {
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if acc.contains(needle) {
+                    break;
+                }
+            }
+            acc
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    async fn smtp_write(stream: &mut (impl AsyncWriteExt + Unpin), line: &str) {
+        stream.write_all(line.as_bytes()).await.unwrap();
+        stream.write_all(b"\r\n").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn starttls_ehlo_advertises_starttls_before_tls() {
+        let pool = chatmail_db::init_memory_db().await.unwrap();
+        let s = SmtpSession::new(
+            Arc::new(chatmail_state::AppState::new(std::env::temp_dir())),
+            pool,
+            SmtpSessionConfig {
+                hostname: "mx.test".into(),
+                primary_domain: "test".into(),
+                local_domains: vec!["test".into()],
+                jit_domain: None,
+                credential_policy: CredentialPolicy::default(),
+                require_auth: true,
+                module: "submission",
+                starttls_config: Some(loopback_tls_configs().0),
+            },
+        );
+        let plain = s.format_ehlo(false);
+        assert!(plain.contains("250-STARTTLS\r\n"));
+        assert!(!plain.contains("AUTH PLAIN"));
+        let tls = s.format_ehlo(true);
+        assert!(!tls.contains("STARTTLS"));
+        assert!(tls.contains("250-AUTH PLAIN\r\n"));
+    }
+
+    /// RFC 3207 / 8314: cleartext EHLO offers STARTTLS; AUTH blocked until upgrade.
+    #[tokio::test]
+    async fn submission_starttls_upgrade_then_auth_allowed() {
+        use rustls::pki_types::ServerName;
+        use tokio_rustls::TlsConnector;
+
+        let (tls_server, tls_client) = loopback_tls_configs();
+        let pool = chatmail_db::init_memory_db().await.unwrap();
+        let ctx = Arc::new(AppState::new(std::env::temp_dir()));
+        let cfg = SmtpSessionConfig {
+            hostname: "mx.test".into(),
+            primary_domain: "test".into(),
+            local_domains: vec!["test".into()],
+            jit_domain: None,
+            credential_policy: CredentialPolicy::default(),
+            require_auth: true,
+            module: "submission",
+            starttls_config: Some(tls_server),
+        };
+
+        let std_listener = StdListener::bind("127.0.0.1:0").unwrap();
+        std_listener.set_nonblocking(true).unwrap();
+        let addr = std_listener.local_addr().unwrap();
+        let pool_bg = pool.clone();
+        let ctx_bg = Arc::clone(&ctx);
+        let cfg_bg = cfg.clone();
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut session = SmtpSession::new(ctx_bg, pool_bg, cfg_bg);
+            let _ = session.handle_connection(stream).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+
+        let banner = read_smtp_until(&mut stream, "220 ").await;
+        assert!(banner.contains("220 mx.test"), "banner: {banner}");
+
+        smtp_write(&mut stream, "EHLO client.test").await;
+        let ehlo = read_smtp_until(&mut stream, "250 OK").await;
+        assert!(ehlo.contains("STARTTLS"), "pre-TLS EHLO: {ehlo}");
+        assert!(!ehlo.contains("AUTH PLAIN"), "pre-TLS EHLO: {ehlo}");
+
+        smtp_write(&mut stream, "AUTH PLAIN").await;
+        let auth_reject = read_smtp_until(&mut stream, "530 ").await;
+        assert!(
+            auth_reject.contains("Must issue a STARTTLS"),
+            "auth reject: {auth_reject}"
+        );
+
+        smtp_write(&mut stream, "STARTTLS").await;
+        let ready = read_smtp_until(&mut stream, "Ready to start TLS").await;
+        assert!(ready.contains("220 2.0.0"), "STARTTLS ready: {ready}");
+
+        let connector = TlsConnector::from(tls_client);
+        let server_name = ServerName::try_from("localhost").unwrap();
+        let mut tls = connector.connect(server_name, stream).await.unwrap();
+
+        smtp_write(&mut tls, "EHLO client.test").await;
+        let ehlo_tls = read_smtp_until(&mut tls, "250 OK").await;
+        assert!(ehlo_tls.contains("AUTH PLAIN"), "post-TLS EHLO: {ehlo_tls}");
+        assert!(!ehlo_tls.contains("STARTTLS"), "post-TLS EHLO: {ehlo_tls}");
     }
 }

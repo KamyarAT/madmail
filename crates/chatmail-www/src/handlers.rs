@@ -494,6 +494,56 @@ pub async fn binary_download(method: Method) -> impl IntoResponse {
     (headers, bytes).into_response()
 }
 
+/// Mozilla ISPDB autoconfig for Delta Chat / Thunderbird (`dcaccount:` fetch).
+pub async fn mail_autoconfig(State(st): State<WwwState>, headers: HeaderMap) -> impl IntoResponse {
+    use axum::http::header;
+    use chatmail_config::{build_autoconfig_xml, AutoconfigParams, DcloginMailSettings};
+
+    let snap = st.app.listener_ports.snapshot();
+    let runtime = chatmail_config::RuntimeListeners {
+        imap_plain_addr: snap.imap_plain_addr,
+        imap_tls_addr: snap.imap_tls_addr,
+        submission_plain_addr: snap.submission_plain_addr,
+        submission_tls_addr: snap.submission_tls_addr,
+        smtp_addr: snap.smtp_addr,
+        http_plain_addr: snap.http_plain_addr,
+        http_tls_addr: snap.http_tls_addr,
+    };
+
+    let cached = match st.context_cache.ensure_fresh(
+        &st.pool,
+        &st.config,
+        st.app.mailbox_store.state_dir(),
+    ).await {
+        Ok(()) => st.context_cache.snapshot().await,
+        Err(e) => {
+            tracing::error!(%e, "autoconfig context cache");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let db_ports = match cached {
+        Some(c) => c.db_ports,
+        None => chatmail_config::DbMailPorts::default(),
+    };
+
+    let mail = DcloginMailSettings::from_config_with_db_and_runtime(
+        &st.config,
+        client_host(&headers),
+        &db_ports,
+        Some(&runtime),
+    );
+    let params = AutoconfigParams::from_mail_settings(&st.mail_domain, &mail, Some(&runtime));
+    let xml = build_autoconfig_xml(&params);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
+        .header(header::CACHE_CONTROL, "public, max-age=3600")
+        .body(Body::from(xml))
+        .unwrap()
+        .into_response()
+}
+
 pub async fn catch_all(
     State(st): State<WwwState>,
     headers: HeaderMap,

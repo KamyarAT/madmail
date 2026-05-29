@@ -33,13 +33,18 @@ pub async fn run_imap_listener(
     addr: &str,
     cancel: CancellationToken,
     tls: Option<Arc<ServerConfig>>,
+    starttls: Option<Arc<ServerConfig>>,
     ctx: Arc<AppState>,
     pool: DbPool,
-    cfg: ImapSessionConfig,
+    mut cfg: ImapSessionConfig,
 ) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
+    let implicit_tls = tls.is_some();
     let tls_acceptor = tls.map(TlsAcceptor::from);
-    info!(%addr, tls = tls_acceptor.is_some(), "IMAP listening");
+    if !implicit_tls {
+        cfg.starttls_config = starttls;
+    }
+    info!(%addr, tls = tls_acceptor.is_some(), starttls = cfg.starttls_config.is_some(), "IMAP listening");
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
@@ -58,7 +63,7 @@ pub async fn run_imap_listener(
                     let mut session = ImapSession::new(ctx, pool, cfg);
                     let result = if let Some(acceptor) = acceptor {
                         match acceptor.accept(stream).await {
-                            Ok(tls_stream) => session.handle_connection(tls_stream).await,
+                            Ok(tls_stream) => session.handle_tls_connection(tls_stream).await,
                             Err(e) => {
                                 tracing::debug!(%peer, error = %e, "IMAP TLS handshake failed");
                                 Ok(())

@@ -29,8 +29,12 @@ use chatmail_storage::{
 };
 use chatmail_turn::TurnDiscovery;
 use chatmail_types::{ChatmailError, Result};
+use rustls::ServerConfig;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
+use tokio_rustls::server::TlsStream;
+use tokio_rustls::TlsAcceptor;
 use tracing::debug;
 
 #[derive(Clone)]
@@ -43,6 +47,8 @@ pub struct ImapSessionConfig {
     pub turn: Option<TurnDiscovery>,
     /// When set, serve `/shared/vendor/deltachat/irohrelay` (WebXDC realtime).
     pub iroh: Option<IrohDiscovery>,
+    /// TLS upgrade on cleartext port 143 (not used on implicit-TLS :993 listeners).
+    pub starttls_config: Option<Arc<ServerConfig>>,
 }
 
 impl ImapSessionConfig {
@@ -86,10 +92,19 @@ impl ImapSession {
         }
     }
 
-    pub async fn handle_connection<S>(&mut self, stream: S) -> Result<()>
-    where
-        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    {
+    pub async fn handle_connection(&mut self, stream: TcpStream) -> Result<()> {
+        if self.cfg.starttls_config.is_some() {
+            self.serve_with_starttls_upgrade(stream).await
+        } else {
+            self.serve_loop(stream, false, false).await
+        }
+    }
+
+    pub async fn handle_tls_connection(&mut self, stream: TlsStream<TcpStream>) -> Result<()> {
+        self.serve_loop(stream, true, true).await
+    }
+
+    async fn serve_with_starttls_upgrade(&mut self, stream: TcpStream) -> Result<()> {
         let (reader, mut writer) = tokio::io::split(stream);
         let mut lines = BufReader::new(reader);
 
@@ -107,13 +122,119 @@ impl ImapSession {
                 continue;
             }
             let (tag, cmd, args) = parse_command(&line);
+            let cmd_upper = cmd.to_ascii_uppercase();
+
+            if cmd_upper == "STARTTLS" {
+                let t = tag.unwrap_or("*");
+                let Some(cfg) = self.cfg.starttls_config.clone() else {
+                    writer
+                        .write_all(format!("{t} BAD STARTTLS not available\r\n").as_bytes())
+                        .await?;
+                    continue;
+                };
+                writer
+                    .write_all(format!("{t} OK Begin TLS negotiation now\r\n").as_bytes())
+                    .await?;
+                writer.flush().await?;
+                let reader = lines.into_inner();
+                let stream = reader.unsplit(writer);
+                let acceptor = TlsAcceptor::from(cfg);
+                let tls = acceptor
+                    .accept(stream)
+                    .await
+                    .map_err(|e| ChatmailError::protocol(format!("STARTTLS failed: {e}")))?;
+                return self.handle_tls_connection(tls).await;
+            }
+
+            if cmd_upper == "LOGIN" || cmd_upper == "AUTHENTICATE" {
+                let t = tag.unwrap_or("*");
+                writer
+                    .write_all(
+                        format!("{t} NO [PRIVACYREQUIRED] TLS required for authentication\r\n")
+                            .as_bytes(),
+                    )
+                    .await?;
+                continue;
+            }
+
             let resp = self
-                .dispatch(&mut lines, tag, &cmd, &args, &mut writer)
+                .dispatch(&mut lines, tag, &cmd, &args, &mut writer, false)
                 .await?;
             if let Some(r) = resp {
                 writer.write_all(r.as_bytes()).await?;
             }
-            if cmd.eq_ignore_ascii_case("LOGOUT") {
+            if cmd_upper == "LOGOUT" {
+                writer
+                    .write_all(b"* BYE chatmail-rs logging out\r\n")
+                    .await?;
+                if let Some(t) = tag {
+                    writer
+                        .write_all(format!("{t} OK LOGOUT completed\r\n").as_bytes())
+                        .await?;
+                }
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    async fn serve_loop<S>(&mut self, stream: S, tls_active: bool, greeted: bool) -> Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let (reader, mut writer) = tokio::io::split(stream);
+        let mut lines = BufReader::new(reader);
+
+        if !greeted {
+            writer
+                .write_all(format!("* OK {} IMAP4rev1 ready\r\n", self.cfg.hostname).as_bytes())
+                .await?;
+        }
+
+        loop {
+            let mut line = String::new();
+            if lines.read_line(&mut line).await? == 0 {
+                break;
+            }
+            let line = line.trim_end().to_string();
+            if line.is_empty() {
+                continue;
+            }
+            let (tag, cmd, args) = parse_command(&line);
+            let cmd_upper = cmd.to_ascii_uppercase();
+
+            if cmd_upper == "STARTTLS" {
+                let t = tag.unwrap_or("*");
+                let msg = if tls_active {
+                    format!("{t} BAD STARTTLS already active\r\n")
+                } else {
+                    format!("{t} BAD STARTTLS not available\r\n")
+                };
+                writer.write_all(msg.as_bytes()).await?;
+                continue;
+            }
+
+            if (cmd_upper == "LOGIN" || cmd_upper == "AUTHENTICATE")
+                && self.cfg.starttls_config.is_some()
+                && !tls_active
+            {
+                let t = tag.unwrap_or("*");
+                writer
+                    .write_all(
+                        format!("{t} NO [PRIVACYREQUIRED] TLS required for authentication\r\n")
+                            .as_bytes(),
+                    )
+                    .await?;
+                continue;
+            }
+
+            let resp = self
+                .dispatch(&mut lines, tag, &cmd, &args, &mut writer, tls_active)
+                .await?;
+            if let Some(r) = resp {
+                writer.write_all(r.as_bytes()).await?;
+            }
+            if cmd_upper == "LOGOUT" {
                 writer
                     .write_all(b"* BYE chatmail-rs logging out\r\n")
                     .await?;
@@ -135,6 +256,7 @@ impl ImapSession {
         cmd: &str,
         args: &str,
         writer: &mut W,
+        tls_active: bool,
     ) -> Result<Option<String>>
     where
         R: tokio::io::AsyncRead + Unpin,
@@ -144,7 +266,10 @@ impl ImapSession {
         match cmd.to_ascii_uppercase().as_str() {
             "CAPABILITY" => Ok(Some(format!(
                 "* CAPABILITY {}\r\n{t} OK CAPABILITY completed\r\n",
-                capability_string(self.cfg.advertise_metadata())
+                capability_string(
+                    self.cfg.advertise_metadata(),
+                    self.cfg.starttls_config.is_some() && !tls_active,
+                )
             ))),
             "NOOP" => Ok(Some(format!("{t} OK NOOP completed\r\n"))),
             "LOGIN" => {
@@ -790,7 +915,7 @@ fn parse_uid_set_and_mailbox(args: &str) -> Result<(Vec<u32>, String)> {
 }
 
 /// Advertised IMAP capabilities (TDD `03-imap-server.md`: XCHATMAIL, IDLE, QUOTA, METADATA).
-pub fn capability_string(advertise_metadata: bool) -> String {
+pub fn capability_string(advertise_metadata: bool, advertise_starttls: bool) -> String {
     let mut caps = vec![
         "IMAP4rev1",
         "IDLE",
@@ -801,6 +926,9 @@ pub fn capability_string(advertise_metadata: bool) -> String {
         "LITERAL+",
         "XCHATMAIL",
     ];
+    if advertise_starttls {
+        caps.push("STARTTLS");
+    }
     if advertise_metadata {
         caps.push("METADATA");
     }
@@ -1197,7 +1325,7 @@ mod tests {
     /// P5-UT01: CAPABILITY includes Chatmail extensions (TDD + cmdeploy `test_capabilities`).
     #[test]
     fn p5_ut01_test_capability_includes_chatmail_extensions() {
-        let caps = capability_string(false);
+        let caps = capability_string(false, false);
         assert!(caps.contains("IMAP4rev1"));
         assert!(caps.contains("IDLE"));
         assert!(caps.contains("QUOTA"));
@@ -1208,7 +1336,10 @@ mod tests {
             "METADATA is advertised only when TURN/Iroh discovery is enabled"
         );
 
-        let with_metadata = capability_string(true);
+        let with_starttls = capability_string(false, true);
+        assert!(with_starttls.contains("STARTTLS"));
+
+        let with_metadata = capability_string(true, false);
         assert!(with_metadata.contains("METADATA"));
     }
 
@@ -1406,6 +1537,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 turn: None,
                 iroh: None,
+                starttls_config: None,
             },
         );
 
@@ -1530,6 +1662,7 @@ mod tests {
                 credential_policy: CredentialPolicy::default(),
                 turn: None,
                 iroh: None,
+                starttls_config: None,
             },
         );
         session.authenticated_user = Some("u@example.org".into());
@@ -1624,6 +1757,7 @@ mod integration_tests {
                     credential_policy: CredentialPolicy::default(),
                     turn,
                     iroh,
+                    starttls_config: None,
                 },
             );
             let _ = session.handle_connection(stream).await;
@@ -1802,6 +1936,7 @@ mod integration_tests {
                     credential_policy: CredentialPolicy::default(),
                     turn: None,
                     iroh: None,
+                    starttls_config: None,
                 },
             );
             let _ = session.handle_connection(stream).await;
@@ -1893,5 +2028,221 @@ mod integration_tests {
         assert!(t.contains("d003 OK CLOSE"), "CLOSE: {t}");
         assert!(t.contains("d004 OK [SELECT]"), "SELECT DeltaChat: {t}");
         assert!(t.contains("/shared/vendor/deltachat/turn"), "metadata: {t}");
+    }
+
+    fn loopback_tls_configs() -> (Arc<ServerConfig>, Arc<rustls::ClientConfig>) {
+        use rcgen::generate_simple_self_signed;
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+        use rustls::{ClientConfig, RootCertStore};
+
+        let rc = generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let cert = CertificateDer::from(rc.cert.der().to_vec());
+        let key = PrivateKeyDer::Pkcs8(rc.key_pair.serialize_der().into());
+        let server = Arc::new(
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(vec![cert.clone()], key)
+                .unwrap(),
+        );
+        let mut roots = RootCertStore::empty();
+        roots.add(cert).unwrap();
+        let client = Arc::new(
+            ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        );
+        (server, client)
+    }
+
+    async fn imap_dialog_starttls(script: &[&str]) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = chatmail_db::init_memory_db().await.unwrap();
+        let ctx = Arc::new(AppState::new(dir.path()));
+        ctx.auth.hydrate(&pool).await.unwrap();
+
+        let (tls_server, _) = loopback_tls_configs();
+        let std_listener = StdListener::bind("127.0.0.1:0").unwrap();
+        std_listener.set_nonblocking(true).unwrap();
+        let addr = std_listener.local_addr().unwrap();
+
+        let pool_bg = pool.clone();
+        let ctx_bg = Arc::clone(&ctx);
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut session = ImapSession::new(
+                ctx_bg,
+                pool_bg,
+                ImapSessionConfig {
+                    hostname: "imap.test".into(),
+                    primary_domain: "test".into(),
+                    jit_domain: None,
+                    credential_policy: CredentialPolicy::default(),
+                    turn: None,
+                    iroh: None,
+                    starttls_config: Some(tls_server),
+                },
+            );
+            let _ = session.handle_connection(stream).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut transcript = String::new();
+        let mut buf = [0u8; 8192];
+
+        for line in script {
+            stream.write_all(line.as_bytes()).await.unwrap();
+            stream.write_all(b"\r\n").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            let chunk = tokio::time::timeout(Duration::from_secs(2), async {
+                let mut acc = String::new();
+                loop {
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if acc.contains("completed")
+                        || acc.contains("PRIVACYREQUIRED")
+                        || acc.contains("Begin TLS")
+                        || acc.contains("BAD ")
+                    {
+                        break;
+                    }
+                }
+                acc
+            })
+            .await
+            .unwrap_or_default();
+            transcript.push_str(&chunk);
+        }
+        transcript
+    }
+
+    /// RFC 2595: CAPABILITY advertises STARTTLS; LOGIN rejected until TLS upgrade.
+    #[tokio::test]
+    async fn imap_starttls_capability_and_login_gate() {
+        let t = imap_dialog_starttls(&[
+            "a001 CAPABILITY",
+            "a002 LOGIN u@test secret",
+            "a003 STARTTLS",
+        ])
+        .await;
+        assert!(t.contains("STARTTLS"), "CAPABILITY: {t}");
+        assert!(
+            t.contains("NO [PRIVACYREQUIRED]"),
+            "LOGIN before TLS: {t}"
+        );
+        assert!(t.contains("OK Begin TLS negotiation"), "STARTTLS: {t}");
+    }
+
+    /// RFC 2595: full STARTTLS upgrade then LOGIN succeeds on encrypted stream.
+    #[tokio::test]
+    async fn imap_starttls_upgrade_then_login() {
+        use rustls::pki_types::ServerName;
+        use tokio_rustls::TlsConnector;
+
+        let dir = tempfile::tempdir().unwrap();
+        let pool = chatmail_db::init_memory_db().await.unwrap();
+        let hash = hash_password("secret").unwrap();
+        chatmail_db::passwords::create_user(&pool, "u@test", &hash)
+            .await
+            .unwrap();
+        let ctx = Arc::new(AppState::new(dir.path()));
+        ctx.auth.hydrate(&pool).await.unwrap();
+
+        let (tls_server, tls_client) = loopback_tls_configs();
+        let std_listener = StdListener::bind("127.0.0.1:0").unwrap();
+        std_listener.set_nonblocking(true).unwrap();
+        let addr = std_listener.local_addr().unwrap();
+
+        let pool_bg = pool.clone();
+        let ctx_bg = Arc::clone(&ctx);
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut session = ImapSession::new(
+                ctx_bg,
+                pool_bg,
+                ImapSessionConfig {
+                    hostname: "imap.test".into(),
+                    primary_domain: "test".into(),
+                    jit_domain: None,
+                    credential_policy: CredentialPolicy::default(),
+                    turn: None,
+                    iroh: None,
+                    starttls_config: Some(tls_server),
+                },
+            );
+            let _ = session.handle_connection(stream).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let mut buf = [0u8; 4096];
+
+        let greeting = tokio::time::timeout(Duration::from_secs(3), async {
+            let mut acc = String::new();
+            loop {
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if acc.contains("IMAP4rev1 ready") {
+                    break;
+                }
+            }
+            acc
+        })
+        .await
+        .unwrap_or_default();
+        assert!(greeting.contains("IMAP4rev1 ready"), "greeting: {greeting}");
+
+        stream.write_all(b"a001 STARTTLS\r\n").await.unwrap();
+        let starttls = tokio::time::timeout(Duration::from_secs(3), async {
+            let mut acc = String::new();
+            loop {
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if acc.contains("Begin TLS negotiation") {
+                    break;
+                }
+            }
+            acc
+        })
+        .await
+        .unwrap_or_default();
+        assert!(
+            starttls.contains("OK Begin TLS negotiation"),
+            "STARTTLS: {starttls}"
+        );
+
+        let connector = TlsConnector::from(tls_client);
+        let server_name = ServerName::try_from("localhost").unwrap();
+        let mut tls = connector.connect(server_name, stream).await.unwrap();
+
+        tls.write_all(b"a002 LOGIN u@test secret\r\n").await.unwrap();
+        let login = tokio::time::timeout(Duration::from_secs(3), async {
+            let mut acc = String::new();
+            loop {
+                let n = tls.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if acc.contains("LOGIN completed") || acc.contains("BAD ") {
+                    break;
+                }
+            }
+            acc
+        })
+        .await
+        .unwrap_or_default();
+        assert!(login.contains("a002 OK LOGIN completed"), "login: {login}");
     }
 }

@@ -273,6 +273,7 @@ SMTP, submission, message format, and PGP policy. Full index: [`RFC/README.md`](
 | [5321](https://datatracker.ietf.org/doc/html/rfc5321) | SMTP protocol | [rfc5321.txt](RFC/rfc5321.txt) |
 | [6409](https://datatracker.ietf.org/doc/html/rfc6409) | Message submission (port 587) | [rfc6409.txt](RFC/rfc6409.txt) |
 | [8314](https://datatracker.ietf.org/doc/html/rfc8314) | TLS for submission (465/587) | [rfc8314.txt](RFC/rfc8314.txt) |
+| [3207](https://datatracker.ietf.org/doc/html/rfc3207) | SMTP STARTTLS extension | [rfc3207.txt](RFC/rfc3207.txt) |
 | [4954](https://datatracker.ietf.org/doc/html/rfc4954) | SMTP AUTH extension | [rfc4954.txt](RFC/rfc4954.txt) |
 | [6531](https://datatracker.ietf.org/doc/html/rfc6531) | SMTPUTF8 | [rfc6531.txt](RFC/rfc6531.txt) |
 | [5322](https://datatracker.ietf.org/doc/html/rfc5322) | Internet Message Format | [rfc5322.txt](RFC/rfc5322.txt) |

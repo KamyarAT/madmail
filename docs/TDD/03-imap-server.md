@@ -517,6 +517,8 @@ IMAP core and extensions used by Madmail / Delta Chat. Full index: [`RFC/README.
 | RFC | Topic | Local |
 |-----|-------|-------|
 | [3501](https://datatracker.ietf.org/doc/html/rfc3501) | IMAP4rev1 (base protocol) | [rfc3501.txt](RFC/rfc3501.txt) |
+| [2595](https://datatracker.ietf.org/doc/html/rfc2595) | IMAP STARTTLS (`STARTTLS`, `[PRIVACYREQUIRED]`) | [rfc2595.txt](RFC/rfc2595.txt) |
+| [8314](https://datatracker.ietf.org/doc/html/rfc8314) | TLS for IMAP access (993/143) | [rfc8314.txt](RFC/rfc8314.txt) |
 | [2177](https://datatracker.ietf.org/doc/html/rfc2177) | IDLE | [rfc2177.txt](RFC/rfc2177.txt) |
 | [5464](https://datatracker.ietf.org/doc/html/rfc5464) | METADATA | [rfc5464.txt](RFC/rfc5464.txt) |
 | [2087](https://datatracker.ietf.org/doc/html/rfc2087) | QUOTA | [rfc2087.txt](RFC/rfc2087.txt) |
