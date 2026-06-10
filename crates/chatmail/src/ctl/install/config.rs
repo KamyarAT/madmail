@@ -47,7 +47,12 @@ pub struct InstallConfig {
     pub ss_password: String,
     pub ss_cipher: String,
     pub language: String,
+    pub config_dir: PathBuf,
     pub config_path: PathBuf,
+    /// User passed `--config-dir` and/or `--state-dir` (systemd uses explicit paths).
+    pub paths_explicit: bool,
+    /// Use `StateDirectory` / `ConfigurationDirectory` in the systemd unit (default FHS layout).
+    pub use_default_systemd_paths: bool,
     pub system_install: bool,
     pub skip_user: bool,
     pub skip_systemd: bool,

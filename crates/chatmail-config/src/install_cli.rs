@@ -42,8 +42,9 @@ pub struct InstallArgs {
     #[arg(long)]
     pub ip: Option<String>,
 
-    #[arg(long, default_value = "/etc/madmail")]
-    pub config_dir: PathBuf,
+    /// Config directory (default: `/etc/madmail`).
+    #[arg(long)]
+    pub config_dir: Option<PathBuf>,
 
     /// State directory (default: `/var/lib/<binary>` for `--simple` / system install).
     #[arg(long)]

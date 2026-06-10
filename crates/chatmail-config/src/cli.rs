@@ -776,4 +776,22 @@ mod tests {
             })) if username == "bad@x.org" && r == "spam"
         ));
     }
+
+    #[test]
+    fn default_install_subcommand_flags_are_unset() {
+        let cli = Cli::try_parse_from(["madmail", "install", "--simple", "--ip", "1.2.3.4"]).unwrap();
+        let Some(Command::Install(args)) = cli.command else {
+            panic!("expected install subcommand");
+        };
+        assert!(
+            args.config_dir.is_none(),
+            "config_dir should be unset for default install, got {:?}",
+            args.config_dir
+        );
+        assert!(
+            args.state_dir.is_none(),
+            "state_dir should be unset for default install, got {:?}",
+            args.state_dir
+        );
+    }
 }

@@ -37,13 +37,15 @@ pub fn require_root_for_system_install(cfg: &InstallConfig, dry_run: bool) -> Re
     if effective_uid_is_root() {
         return Ok(());
     }
-    Err(ChatmailError::config(
-        "installation to /etc and /var/lib requires root (use sudo)",
-    ))
+    Err(ChatmailError::config(format!(
+        "system install requires root (use sudo): installs service user, binary, and systemd unit; config {}, state {}",
+        cfg.config_dir.display(),
+        cfg.state_dir.display()
+    )))
 }
 
 pub fn create_service_user(cfg: &InstallConfig, dry_run: bool) -> Result<()> {
-    if cfg.skip_user {
+    if cfg.skip_user || !cfg.system_install {
         return Ok(());
     }
 

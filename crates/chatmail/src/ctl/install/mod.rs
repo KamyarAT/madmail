@@ -84,7 +84,7 @@ pub async fn install(global: &Args, args: &InstallArgs) -> Result<()> {
         system::setup_permissions(&cfg, false)?;
         system::install_binary(&cfg, false)?;
     }
-    if !args.skip_systemd {
+    if cfg.system_install && !args.skip_systemd {
         systemd::install_unit(&cfg)?;
         systemd::daemon_reload()?;
     }
@@ -268,7 +268,7 @@ fn print_next_steps(cfg: &InstallConfig) {
             "  • TLS renewal: in-process task renew-certificate (daily while server runs; IP <4d, DNS <30d)"
         );
     }
-    if !cfg.skip_systemd {
+    if cfg.system_install && !cfg.skip_systemd {
         println!(
             "  • Start:  systemctl reset-failed {} ; systemctl enable --now {}",
             cfg.binary_name, cfg.binary_name
@@ -276,6 +276,13 @@ fn print_next_steps(cfg: &InstallConfig) {
         println!(
             "  • Logs:   journalctl -u {} -n 100 --no-pager",
             cfg.binary_name
+        );
+    } else if !cfg.system_install {
+        println!(
+            "  • Start:  {} --config {} run --libexec {}",
+            cfg.binary_name,
+            cfg.config_path.display(),
+            cfg.state_dir.display()
         );
     }
     println!("  • Admin:  madmail admin-token");
@@ -295,8 +302,27 @@ impl InstallConfig {
             })
             .unwrap_or_else(|| "madmail".into());
 
-        let config_dir = args.config_dir.clone();
-        let state_dir = resolve_install_state_dir(&binary_name, global, args);
+        let config_dir = args
+            .config_dir
+            .clone()
+            .unwrap_or_else(default_install_config_dir);
+        let state_dir = resolve_install_state_dir(&binary_name, global, args, &config_dir);
+        let default_config_dir = default_install_config_dir();
+        let default_state_dir = default_install_state_dir(&binary_name);
+        // Global `--state-dir` default leaks into install args via clap; treat default paths as implicit.
+        let config_explicit = args
+            .config_dir
+            .as_ref()
+            .is_some_and(|d| d != &default_config_dir);
+        let state_explicit = args
+            .state_dir
+            .as_ref()
+            .is_some_and(|d| d != &default_state_dir);
+        let use_default_systemd_paths = !config_explicit
+            && !state_explicit
+            && config_dir == default_config_dir
+            && state_dir == default_state_dir;
+        let paths_explicit = !use_default_systemd_paths;
         let config_path = config_dir.join(format!("{binary_name}.conf"));
         let cert_dir = config_dir.join("certs");
         let cert_path = args
@@ -308,8 +334,9 @@ impl InstallConfig {
             .clone()
             .unwrap_or_else(|| cert_dir.join("privkey.pem"));
 
-        let system_install =
-            args.simple || config_dir.starts_with("/etc/") || state_dir.starts_with("/var/lib/");
+        let system_install = config_dir.starts_with("/etc/")
+            || state_dir.starts_with("/var/lib/")
+            || (args.simple && !paths_explicit);
 
         let binary_path = args
             .binary_path
@@ -424,7 +451,10 @@ impl InstallConfig {
             ss_password: String::new(),
             ss_cipher: "aes-128-gcm".into(),
             language,
+            config_dir,
             config_path,
+            paths_explicit,
+            use_default_systemd_paths,
             system_install,
             skip_user: args.skip_user,
             skip_systemd: args.skip_systemd,
@@ -444,11 +474,24 @@ fn ensure_ss_password(cfg: &mut InstallConfig) -> Result<()> {
 }
 
 /// Madmail `install.go` always uses `/var/lib/<binary>` for production installs, never cwd `./data`.
-fn resolve_install_state_dir(binary_name: &str, global: &Args, args: &InstallArgs) -> PathBuf {
+fn default_install_config_dir() -> PathBuf {
+    PathBuf::from("/etc/madmail")
+}
+
+fn default_install_state_dir(binary_name: &str) -> PathBuf {
+    PathBuf::from(format!("/var/lib/{binary_name}"))
+}
+
+fn resolve_install_state_dir(
+    binary_name: &str,
+    global: &Args,
+    args: &InstallArgs,
+    config_dir: &std::path::Path,
+) -> PathBuf {
     if let Some(dir) = &args.state_dir {
         return dir.clone();
     }
-    if args.simple || args.config_dir.starts_with("/etc/") {
+    if args.simple || config_dir.starts_with("/etc/") {
         return PathBuf::from(format!("/var/lib/{binary_name}"));
     }
     if global.state_dir.is_relative() || is_local_dev_state_dir(&global.state_dir) {
@@ -490,7 +533,7 @@ mod tests {
             domain: None,
             hostname: None,
             ip: Some(EXAMPLE_PUBLIC_IP.into()),
-            config_dir: PathBuf::from("/etc/madmail"),
+            config_dir: None,
             state_dir: None,
             tls_mode: None,
             cert_path: None,
@@ -532,7 +575,129 @@ mod tests {
         );
         assert!(!cfg.state_dir.to_string_lossy().contains("./data"));
         assert!(cfg.system_install);
+        assert!(cfg.use_default_systemd_paths);
         assert_eq!(cfg.language, "en");
+    }
+
+    #[test]
+    fn simple_install_custom_paths_are_not_system_install() {
+        let global = Args {
+            config: PathBuf::from("/etc/madmail/madmail.conf"),
+            state_dir: PathBuf::from("./data"),
+            boot_once: false,
+        };
+        let args = InstallArgs {
+            non_interactive: false,
+            simple: true,
+            domain: None,
+            hostname: None,
+            ip: Some(EXAMPLE_PUBLIC_IP.into()),
+            config_dir: Some(PathBuf::from("/tmp/mm")),
+            state_dir: Some(PathBuf::from("/tmp/sd")),
+            tls_mode: None,
+            cert_path: None,
+            key_path: None,
+            acme_email: None,
+            enable_chatmail: false,
+            enable_ss: false,
+            turn_off_tls: false,
+            dry_run: false,
+            skip_systemd: false,
+            skip_user: false,
+            binary_path: None,
+            obtain_certificate: true,
+            auto_ip_cert: false,
+            lang: "en".into(),
+        };
+        let cfg = InstallConfig::from_args(&global, &args).unwrap();
+        assert_eq!(cfg.state_dir, PathBuf::from("/tmp/sd"));
+        assert_eq!(cfg.config_dir, PathBuf::from("/tmp/mm"));
+        assert_eq!(cfg.config_path.parent().unwrap(), PathBuf::from("/tmp/mm").as_path());
+        assert!(cfg.cert_path.starts_with("/tmp/mm/certs"));
+        assert!(cfg.paths_explicit);
+        assert!(!cfg.use_default_systemd_paths);
+        assert!(!cfg.system_install);
+    }
+
+    #[test]
+    fn explicit_fhs_paths_use_custom_systemd_layout() {
+        let global = Args {
+            config: PathBuf::from("/etc/madmail/madmail.conf"),
+            state_dir: PathBuf::from("./data"),
+            boot_once: false,
+        };
+        let args = InstallArgs {
+            non_interactive: false,
+            simple: true,
+            domain: None,
+            hostname: None,
+            ip: Some(EXAMPLE_PUBLIC_IP.into()),
+            config_dir: Some(PathBuf::from("/etc/madmail-custom")),
+            state_dir: Some(PathBuf::from("/var/lib/madmail-custom")),
+            tls_mode: None,
+            cert_path: None,
+            key_path: None,
+            acme_email: None,
+            enable_chatmail: false,
+            enable_ss: false,
+            turn_off_tls: false,
+            dry_run: false,
+            skip_systemd: false,
+            skip_user: false,
+            binary_path: None,
+            obtain_certificate: true,
+            auto_ip_cert: false,
+            lang: "en".into(),
+        };
+        let cfg = InstallConfig::from_args(&global, &args).unwrap();
+        assert!(cfg.paths_explicit);
+        assert!(!cfg.use_default_systemd_paths);
+        assert!(cfg.system_install);
+        let unit = systemd::render_systemd_unit(&cfg);
+        assert!(!unit.contains("StateDirectory="));
+        assert!(unit.contains(&format!(
+            "--config {} run --libexec {}",
+            cfg.config_path.display(),
+            cfg.state_dir.display()
+        )));
+        assert!(unit.contains("ReadWritePaths=/var/lib/madmail-custom /etc/madmail-custom"));
+    }
+
+    #[test]
+    fn default_install_uses_fhs_systemd_layout_despite_global_state_dir_default() {
+        let global = Args {
+            config: PathBuf::from("/etc/madmail/madmail.conf"),
+            state_dir: PathBuf::from("/var/lib/madmail"),
+            boot_once: false,
+        };
+        let args = InstallArgs {
+            non_interactive: false,
+            simple: true,
+            domain: None,
+            hostname: None,
+            ip: Some(EXAMPLE_PUBLIC_IP.into()),
+            config_dir: None,
+            state_dir: None,
+            tls_mode: None,
+            cert_path: None,
+            key_path: None,
+            acme_email: None,
+            enable_chatmail: false,
+            enable_ss: false,
+            turn_off_tls: false,
+            dry_run: false,
+            skip_systemd: false,
+            skip_user: false,
+            binary_path: None,
+            obtain_certificate: true,
+            auto_ip_cert: false,
+            lang: "en".into(),
+        };
+        let cfg = InstallConfig::from_args(&global, &args).unwrap();
+        assert!(cfg.use_default_systemd_paths);
+        let unit = systemd::render_systemd_unit(&cfg);
+        assert!(unit.contains(&format!("StateDirectory={}", cfg.binary_name)));
+        assert!(unit.contains(&format!("ConfigurationDirectory={}", cfg.binary_name)));
     }
 
     #[test]
@@ -550,7 +715,7 @@ mod tests {
                 domain: None,
                 hostname: None,
                 ip: Some(EXAMPLE_PUBLIC_IP.into()),
-                config_dir: PathBuf::from("/etc/madmail"),
+                config_dir: None,
                 state_dir: None,
                 tls_mode: None,
                 cert_path: None,
@@ -587,7 +752,7 @@ mod tests {
             domain: Some("mail.example.org".into()),
             hostname: None,
             ip: Some(EXAMPLE_PUBLIC_IP.into()),
-            config_dir: PathBuf::from("/etc/madmail"),
+            config_dir: None,
             state_dir: None,
             tls_mode: None,
             cert_path: None,
@@ -632,7 +797,7 @@ mod tests {
                 domain: None,
                 hostname: None,
                 ip: None,
-                config_dir: PathBuf::from("/etc/madmail"),
+                config_dir: None,
                 state_dir: None,
                 tls_mode: None,
                 cert_path: None,
@@ -668,7 +833,7 @@ mod tests {
                 domain: None,
                 hostname: None,
                 ip: Some(EXAMPLE_PUBLIC_IP.into()),
-                config_dir: PathBuf::from("/etc/madmail"),
+                config_dir: None,
                 state_dir: None,
                 tls_mode: None,
                 cert_path: None,
