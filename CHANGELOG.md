@@ -1,3 +1,13 @@
+# [2.4.0](https://github.com/themadorg/madmail/compare/v2.3.1...v2.4.0) (2026-06-10)
+
+
+### Features
+
+* **certificates:** implement in-process Let's Encrypt certificate renewal for autocert mode ([fe39ef4](https://github.com/themadorg/madmail/commit/fe39ef403bcbd73012ef49f3e4f3355061fc84ea))
+* **ci:** add Docker build and push workflow ([1e531d5](https://github.com/themadorg/madmail/commit/1e531d569508ec9ac045f9d46e278a0362193b18))
+* **push:** implement Delta Chat push notifications support ([5f267f5](https://github.com/themadorg/madmail/commit/5f267f568d5e9a5e12a5fe98881377b508b516cf))
+* **reload:** implement reload functionality for HTTP routes and server management ([87c0dda](https://github.com/themadorg/madmail/commit/87c0dda2d510d8fe77b0fcf21914b038c57fa036))
+
 ## [2.3.1](https://github.com/themadorg/madmail/compare/v2.3.0...v2.3.1) (2026-06-10)
 
 
