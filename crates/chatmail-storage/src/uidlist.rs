@@ -243,6 +243,7 @@ impl UidListStore {
     /// disk write of the uidlist file entirely. This is safe for the "maximum
     /// throughput, no durability" case and removes per-APPEND metadata cost
     /// that Dovecot also removes when mail_fsync=never.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn pre_register(
         &self,
         user: &str,
@@ -437,7 +438,10 @@ mod tests {
 
         let uidlist = UidListStore::default();
         let first = uidlist.sync("u@test", "INBOX", &paths).await.unwrap();
-        assert_eq!(first.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(
+            first.iter().map(|m| m.uid).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
 
         // Delete the middle message; its UID (2) must not be reused.
         fs::remove_file(paths.new.join("bbb")).await.unwrap();
@@ -447,7 +451,10 @@ mod tests {
         // A new message gets UID 4, never the freed 2.
         touch(&paths.new, "ddd").await;
         let grown = uidlist.sync("u@test", "INBOX", &paths).await.unwrap();
-        assert_eq!(grown.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![1, 3, 4]);
+        assert_eq!(
+            grown.iter().map(|m| m.uid).collect::<Vec<_>>(),
+            vec![1, 3, 4]
+        );
     }
 
     /// P11-UT28: a cold store (restart) reloads the persisted UIDs instead of renumbering.
@@ -535,14 +542,19 @@ mod tests {
         assert_eq!(parsed.records.get("id-a").unwrap().uid, 1);
         assert_eq!(parsed.records.get("id-a").unwrap().size, 100);
         assert_eq!(parsed.records.get("id-b").unwrap().uid, 4);
-        assert_eq!(parsed.records.get("id-b").unwrap().internal_secs, 1_700_000_100);
+        assert_eq!(
+            parsed.records.get("id-b").unwrap().internal_secs,
+            1_700_000_100
+        );
     }
 
     /// P11-UT31: a missing index file is treated as an empty mailbox, not an error.
     #[tokio::test]
     async fn p11_ut31_missing_index_is_empty() {
         let tmp = tempfile::tempdir().unwrap();
-        let data = read_uidlist(&tmp.path().join("does-not-exist")).await.unwrap();
+        let data = read_uidlist(&tmp.path().join("does-not-exist"))
+            .await
+            .unwrap();
         assert_eq!(data.next_uid, 1);
         assert!(data.records.is_empty());
     }

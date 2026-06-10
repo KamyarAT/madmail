@@ -1,6 +1,6 @@
 # 14 — Understanding `context/` and `external/` (The Reference Forests)
 
-These two directories contain the majority of the bytes in the repository, yet most of the code in them is **not** compiled into the final `chatmail` binary.
+These two directories contain the majority of the bytes in the repository, yet most of the code in them is **not** compiled into the final `madmail` binary.
 
 Understanding why they exist is key to not getting lost.
 
@@ -66,7 +66,7 @@ Currently contains only:
 The SvelteKit + TypeScript + Tailwind admin panel.
 
 - This one you **do** edit and commit changes from (after `git submodule update --init`).
-- The built output is what gets embedded into the `chatmail` binary.
+- The built output is what gets embedded into the `madmail` binary.
 - Upstream lives at `themadorg/madmail-admin-web`.
 
 See `external/README.md` and the Makefile targets `build-admin-web` / `build-with-admin-web`.

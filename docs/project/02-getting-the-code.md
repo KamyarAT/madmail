@@ -71,8 +71,8 @@ madmailv2/                          # repo root (this directory)
 
 This is where 95% of active development happens for the v2 server.
 
-- `chatmail` is the binary you `cargo run` or deploy.
-- All other `chatmail-*` crates are libraries that the binary (and sometimes tests or admin tools) depend on.
+- `madmail` is the binary you build and deploy (`cargo build -p chatmail` produces `target/.../madmail`).
+- The `chatmail` crate and all other `chatmail-*` crates are libraries the binary depends on.
 - Designed for **single-binary deployment** — the admin web SPA, static docs, etc. can be compiled in via `build.rs`.
 
 ### 2. `context/` — Reference / Archaeology / Inspiration
@@ -93,7 +93,7 @@ These are **large**, often read-only or infrequently touched trees.
 
 Currently contains the admin web SvelteKit app as a git submodule.
 
-- You edit it, run `make build-admin-web`, then `make build-with-admin-web` (or the specific targets) to embed the built SPA into the `chatmail` binary via `chatmail-admin-web/build.rs`.
+- You edit it, run `make build-admin-web`, then `make build-with-admin-web` (or the specific targets) to embed the built SPA into the `madmail` binary via `chatmail-admin-web/build.rs`.
 - See `external/README.md` for the exact workflow.
 
 ## Runtime Artifacts (`data/` in dev)
@@ -125,7 +125,7 @@ These are created on first boot or via `make reset-db`.
 
 ## Common Confusion Points
 
-- "Is the binary called chatmail or madmail?" → Both. Source/binary name is `chatmail`; deployed name on many servers is `madmail`.
+- "Is the binary called chatmail or madmail?" → **`madmail`** is the binary and CLI. **`chatmail`** is the main Rust crate name (and the chat relay protocol).
 - "Where is the real mail server logic?" → Split across `chatmail-smtp`, `chatmail-imap`, `chatmail-fed`, `chatmail-delivery`, `chatmail-pgp`.
 - "Why is there a whole `context/` tree?" → Historical reference + test harness + inspiration. Not compiled into the product by default.
 - "Why embed a whole Svelte app?" → Self-contained deploys. One binary + one systemd unit = full operator experience.

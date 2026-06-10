@@ -32,9 +32,7 @@ pub(crate) struct DirMtime {
 
 impl DirMtime {
     fn from_system_time(t: SystemTime) -> Self {
-        let dur = t
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default();
+        let dur = t.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
         Self {
             secs: dur.as_secs(),
             nanos: dur.subsec_nanos(),
@@ -57,7 +55,8 @@ pub struct MaildirListCache {
 
 impl MaildirListCache {
     pub fn invalidate(&self, user: &str, mailbox: &str) {
-        self.entries.remove(&(user.to_string(), mailbox.to_string()));
+        self.entries
+            .remove(&(user.to_string(), mailbox.to_string()));
     }
 
     pub(crate) async fn dir_mtime(path: &Path) -> Option<DirMtime> {
@@ -170,12 +169,10 @@ mod tests {
 
         tokio::fs::write(new_dir.join("msg"), b"x").await.unwrap();
 
-        assert!(
-            cache
-                .get_if_fresh("u@test", "INBOX", &new_dir, &cur_dir)
-                .await
-                .is_none()
-        );
+        assert!(cache
+            .get_if_fresh("u@test", "INBOX", &new_dir, &cur_dir)
+            .await
+            .is_none());
     }
 
     /// P11-UT06: explicit invalidation drops cached listing.
@@ -184,6 +181,9 @@ mod tests {
         let cache = MaildirListCache::default();
         cache.store("u@test", "INBOX", None, None, vec![sample_msg("x")]);
         cache.invalidate("u@test", "INBOX");
-        assert!(cache.entries.get(&("u@test".into(), "INBOX".into())).is_none());
+        assert!(cache
+            .entries
+            .get(&("u@test".into(), "INBOX".into()))
+            .is_none());
     }
 }

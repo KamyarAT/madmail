@@ -20,10 +20,13 @@ use std::path::{Path, PathBuf};
 use chatmail_types::{ChatmailError, Result};
 use tokio::io::{AsyncRead, AsyncWriteExt};
 
-use crate::cas::{hash_bytes, stream_to_file_no_hash, stream_to_file_no_hash_largebuf, stream_to_tmp_with_hash, BlobHash};
+use crate::cas::{
+    hash_bytes, stream_to_file_no_hash, stream_to_file_no_hash_largebuf, stream_to_tmp_with_hash,
+    BlobHash,
+};
+use crate::delivery_batch::PendingDelivery;
 use crate::maildir::MailboxStore;
 use crate::maildir_message::split_maildir_filename;
-use crate::delivery_batch::PendingDelivery;
 use crate::storage_policy::FsyncMode;
 
 // Very simple global per-mailbox batcher for the Never relaxed path experiment.
@@ -120,10 +123,21 @@ pub(crate) async fn link_into_inbox(
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let size = tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0);
+            let size = tokio::fs::metadata(&dest)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
             let _ = store
                 .uidlist()
-                .pre_register(user, "INBOX", &store.maildir_for_mailbox(user, "INBOX"), msg_id, size, internal_secs, store.policy().fsync_mode)
+                .pre_register(
+                    user,
+                    "INBOX",
+                    &store.maildir_for_mailbox(user, "INBOX"),
+                    msg_id,
+                    size,
+                    internal_secs,
+                    store.policy().fsync_mode,
+                )
                 .await;
 
             Ok(dest)
@@ -202,7 +216,8 @@ where
 
     let target_path = paths.tmp.join(msg_id);
     let do_sync = store.policy().fsync_mode.sync_file_data();
-    let (hash, written, header) = stream_to_tmp_with_hash(&target_path, reader, size, do_sync).await?;
+    let (hash, written, header) =
+        stream_to_tmp_with_hash(&target_path, reader, size, do_sync).await?;
     Ok((target_path, header, hash, written))
 }
 
@@ -287,8 +302,7 @@ async fn commit_mailbox_blob(
     if store.policy().cas_enabled {
         let hash = hash_bytes(body);
         let canonical = store.content_store().put_if_absent(hash, body).await?;
-        return install_maildir_entry(store, user, mailbox, msg_id, &paths, &canonical)
-            .await;
+        return install_maildir_entry(store, user, mailbox, msg_id, &paths, &canonical).await;
     }
 
     let tmp_path = paths.tmp.join(msg_id);
@@ -366,7 +380,15 @@ async fn finalize_from_tmp(
                     .unwrap_or(0);
                 let _ = store
                     .uidlist()
-                    .pre_register(user, mailbox, paths, msg_id, tmp.size, internal_secs, store.policy().fsync_mode)
+                    .pre_register(
+                        user,
+                        mailbox,
+                        paths,
+                        msg_id,
+                        tmp.size,
+                        internal_secs,
+                        store.policy().fsync_mode,
+                    )
                     .await;
             }
 
@@ -396,7 +418,15 @@ async fn finalize_from_tmp(
         .unwrap_or(0);
     let _ = store
         .uidlist()
-        .pre_register(user, mailbox, paths, msg_id, tmp.size, internal_secs, store.policy().fsync_mode)
+        .pre_register(
+            user,
+            mailbox,
+            paths,
+            msg_id,
+            tmp.size,
+            internal_secs,
+            store.policy().fsync_mode,
+        )
         .await;
 
     Ok(new_path)
@@ -422,11 +452,23 @@ async fn install_maildir_entry(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    let size = tokio::fs::metadata(&dest)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
     // Ignore error — uidlist pre-registration is best-effort for correctness
     // (sync will still discover it on next listing).
     let _ = store
         .uidlist()
-        .pre_register(user, mailbox, paths, msg_id, 0, internal_secs, store.policy().fsync_mode) // size will be corrected on first sync if 0
+        .pre_register(
+            user,
+            mailbox,
+            paths,
+            msg_id,
+            size,
+            internal_secs,
+            store.policy().fsync_mode,
+        )
         .await;
 
     Ok(dest)
@@ -585,15 +627,25 @@ mod tests {
 
         // Simulate streaming path under Never
         let (written, _header) = stream_append_direct_final_no_hash(
-            &store, user, mailbox, msg_id, &mut std::io::Cursor::new(&body), body.len() as u64,
-        ).await.unwrap();
+            &store,
+            user,
+            mailbox,
+            msg_id,
+            &mut std::io::Cursor::new(&body),
+            body.len() as u64,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(written, body.len() as u64);
 
         let paths = store.maildir_for_mailbox(user, mailbox);
         let final_path = paths.new.join(msg_id);
         assert!(final_path.exists(), "file must be directly in new/");
-        assert!(!paths.tmp.join(msg_id).exists(), "must not leave anything in tmp/");
+        assert!(
+            !paths.tmp.join(msg_id).exists(),
+            "must not leave anything in tmp/"
+        );
 
         // Under Never + first distinct, we must not have created a CAS canonical yet
         // (we defer it for speed, as in the benchmark path)
@@ -601,7 +653,6 @@ mod tests {
         // The hash would be computed only if we went through normal path; here we expect no blob in CAS for this
         // (the direct path skips it for the first copy)
         // Simple existence check on a plausible blob path is enough for the test intent.
-        let dummy_hash = [0u8; 32]; // we used dummy in some paths; real test just checks no extra work was done
         let _ = content_store; // silence unused for this focused test
     }
 

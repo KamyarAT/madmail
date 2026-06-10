@@ -129,7 +129,7 @@ jobs:
           key: build-release
 
       - name: cargo build --release
-        run: cargo build --release --locked --bin chatmail
+        run: cargo build --release --locked --bin madmail
 
       - name: Read build version
         id: version
@@ -140,11 +140,11 @@ jobs:
             echo "VERSION=$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml | awk -F'"' '/^version[[:space:]]*=/ { print $2; exit }')" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload chatmail binary
+      - name: Upload madmail binary
         uses: actions/upload-artifact@v4
         with:
-          name: chatmail-linux-x86_64-${{ steps.version.outputs.VERSION }}
-          path: target/release/chatmail
+          name: madmail-linux-x86_64-${{ steps.version.outputs.VERSION }}
+          path: target/release/madmail
           if-no-files-found: error
           retention-days: 30
 

@@ -61,7 +61,7 @@ This `docs/project/` area now contains both the deep code-understanding series a
 
 ## Key Concepts at a Glance
 
-- **Single binary** (`chatmail`, often installed as `madmail`): everything (SMTP, IMAP, HTTP federation, admin API, TURN, optional proxies) in one process.
+- **Single binary** (`madmail`): everything (SMTP, IMAP, HTTP federation, admin API, TURN, optional proxies) in one process.
 - **PGP-only by design** for Delta Chat users (enforced in SMTP DATA, APPEND, /mxdeliv).
 - **Just-In-Time (JIT) registration** — accounts created on first login or `/new`.
 - **Hybrid federation** — preferred HTTP POST /mxdeliv, fallback to SMTP.

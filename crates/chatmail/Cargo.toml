@@ -13,7 +13,7 @@ name = "chatmail"
 path = "src/lib.rs"
 
 [[bin]]
-name = "chatmail"
+name = "madmail"
 path = "src/main.rs"
 
 [dependencies]

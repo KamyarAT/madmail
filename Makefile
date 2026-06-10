@@ -13,8 +13,8 @@
 export
 
 # ── Paths & binaries ─────────────────────────────────────────────────────────
-BINARY_DEBUG     := target/debug/chatmail
-BINARY_RELEASE   := target/release/chatmail
+BINARY_DEBUG     := target/debug/madmail
+BINARY_RELEASE   := target/release/madmail
 BINARY_PROFILING := build/madmail-linux-amd64-profiling
 BINARY_PUSH      ?= $(BINARY_RELEASE)
 STATE_DIR        ?= ./data
@@ -217,7 +217,7 @@ test-core-turn:
 
 # Delta Chat RPC E2E (deltachat-test) in Incus: static binary deploy + cmlxc test runner.
 # First time: make test-deltachat DC_TEST_ARGS='--init'
-# Optional: CHATMAIL_BIN=target/release/chatmail make test-deltachat
+# Optional: CHATMAIL_BIN=target/release/madmail make test-deltachat
 test-deltachat:
 	chmod +x scripts/deltachat-test-incus.sh scripts/deltachat-test-deploy.py
 	@command -v uv >/dev/null || (echo "test-deltachat needs uv: https://docs.astral.sh/uv/"; exit 1)
@@ -260,11 +260,11 @@ dev-certs:
 # Background dev server (HTTP 8080; mail 993/143/465/587 — Madmail defaults, see `make dev-certs`)
 run-bg: build
 	@if [ -f $(PID_FILE) ] && kill -0 $$(cat $(PID_FILE)) 2>/dev/null; then \
-		echo "chatmail already running (pid $$(cat $(PID_FILE)))"; \
+		echo "madmail already running (pid $$(cat $(PID_FILE)))"; \
 	else \
 		nohup $(BINARY_DEBUG) $(CHATMAIL_FLAGS) --debug > $(LOG_FILE) 2>&1 & \
 		echo $$! > $(PID_FILE); \
-		echo "Started chatmail pid $$(cat $(PID_FILE)), log: $(LOG_FILE)"; \
+		echo "Started madmail pid $$(cat $(PID_FILE)), log: $(LOG_FILE)"; \
 	fi
 
 # Bind 25/143/465/587/993 without root (Linux, optional)
@@ -280,8 +280,8 @@ stop:
 		kill $$(cat $(PID_FILE)) 2>/dev/null || true; \
 		rm -f $(PID_FILE); \
 	fi
-	-pkill -f 'target/debug/chatmail.*$(STATE_DIR)' 2>/dev/null || true
-	@echo "Stopped chatmail (if it was running)"
+	-pkill -f 'target/debug/madmail.*$(STATE_DIR)' 2>/dev/null || true
+	@echo "Stopped madmail (if it was running)"
 
 logs:
 	@tail -f $(LOG_FILE)
@@ -294,7 +294,7 @@ reset-db: stop
 
 # Local dev with admin UI (madmail: install — rebuilds binary + restarts service)
 install: build-with-admin-web restart
-	@echo "Local chatmail running with $(CONFIG)"
+	@echo "Local madmail running with $(CONFIG)"
 
 sign:
 	@chmod +x scripts/sign.sh
@@ -328,8 +328,8 @@ log2:
 
 build-publish: build-release
 	@mkdir -p build
-	@if [ -f target/x86_64-unknown-linux-gnu/release/chatmail ]; then \
-		cp target/x86_64-unknown-linux-gnu/release/chatmail build/madmail-linux-amd64; \
+	@if [ -f target/x86_64-unknown-linux-gnu/release/madmail ]; then \
+		cp target/x86_64-unknown-linux-gnu/release/madmail build/madmail-linux-amd64; \
 	else \
 		cp $(BINARY_RELEASE) build/madmail-linux-amd64; \
 	fi
@@ -337,11 +337,11 @@ build-publish: build-release
 	@command -v aarch64-linux-gnu-gcc >/dev/null || { echo "Install aarch64-linux-gnu-gcc for ARM64 release" >&2; exit 1; }
 	@CHATMAIL_ADMIN_WEB_BUILD="$(abspath $(ADMIN_WEB_BUILD))" \
 		cargo build -p chatmail --release --target aarch64-unknown-linux-gnu
-	@cp target/aarch64-unknown-linux-gnu/release/chatmail build/madmail-linux-arm64
+	@cp target/aarch64-unknown-linux-gnu/release/madmail build/madmail-linux-arm64
 	@if command -v arm-linux-gnueabihf-gcc >/dev/null; then \
 		CHATMAIL_ADMIN_WEB_BUILD="$(abspath $(ADMIN_WEB_BUILD))" \
 			cargo build -p chatmail --release --target armv7-unknown-linux-gnueabihf; \
-		cp target/armv7-unknown-linux-gnueabihf/release/chatmail build/madmail-linux-arm; \
+		cp target/armv7-unknown-linux-gnueabihf/release/madmail build/madmail-linux-arm; \
 	else \
 		rm -f build/madmail-linux-arm; \
 		echo "Skipping madmail-linux-arm (32-bit): install arm-linux-gnueabihf-gcc" >&2; \
@@ -349,7 +349,7 @@ build-publish: build-release
 	@command -v x86_64-w64-mingw32-gcc >/dev/null || { echo "Install mingw-w64-gcc (x86_64-w64-mingw32-gcc) for Windows release" >&2; exit 1; }
 	@CHATMAIL_ADMIN_WEB_BUILD="$(abspath $(ADMIN_WEB_BUILD))" \
 		cargo build -p chatmail --release --target x86_64-pc-windows-gnu
-	@cp target/x86_64-pc-windows-gnu/release/chatmail.exe build/madmail-windows-amd64.exe
+	@cp target/x86_64-pc-windows-gnu/release/madmail.exe build/madmail-windows-amd64.exe
 	@$(MAKE) build-release-static
 	@cp $(BINARY_RELEASE) build/madmail-linux-amd64-legacy
 

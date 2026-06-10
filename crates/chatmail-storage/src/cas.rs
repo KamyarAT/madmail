@@ -285,9 +285,10 @@ mod tests {
 
         let tmp_path = tmp.path().join("part");
         let mut cursor = std::io::Cursor::new(body.clone());
-        let (hash, n, header) = stream_to_tmp_with_hash(&tmp_path, &mut cursor, body.len() as u64, true)
-            .await
-            .unwrap();
+        let (hash, n, header) =
+            stream_to_tmp_with_hash(&tmp_path, &mut cursor, body.len() as u64, true)
+                .await
+                .unwrap();
 
         assert_eq!(hash, expected);
         assert_eq!(n, body.len() as u64);

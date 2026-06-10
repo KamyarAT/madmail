@@ -6,7 +6,7 @@ This is the "30,000 foot view" that lets you reason about the system without dro
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           chatmail (the binary)                              │
+│                           madmail (the binary)                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  Listeners (started by ServerSupervisor)                                    │
 │  ├─ SMTP (25) + Submission (465/587)   ← chatmail-smtp                      │
@@ -37,7 +37,7 @@ Everything above runs in **one Tokio process**. This is a deliberate design choi
 ## Layered Crate Architecture (Dependency Flow)
 
 ```
-chatmail (binary + ctl + boot + supervisor)
+madmail (binary + ctl + boot + supervisor; crate `chatmail`)
     │
     ├─► chatmail-www, chatmail-admin, chatmail-admin-web, chatmail-fed
     │   (HTTP surfaces)

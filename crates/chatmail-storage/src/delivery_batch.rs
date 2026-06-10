@@ -47,12 +47,7 @@ impl DeliveryBatcher {
         }
     }
 
-    pub async fn submit_for_never(
-        &self,
-        user: &str,
-        mailbox: &str,
-        pending: PendingDelivery,
-    ) {
+    pub async fn submit_for_never(&self, user: &str, mailbox: &str, pending: PendingDelivery) {
         let key = (user.to_string(), mailbox.to_string());
         let coord = self
             .coordinators
@@ -215,7 +210,10 @@ mod tests {
         // Because we batch up to 8, and we do a single sleep scaled by batch size
         // instead of 5 individual sleeps, the total time should be noticeably less
         // than 5 * 50us in a perfect world. We just assert it didn't take forever.
-        assert!(elapsed < Duration::from_millis(10), "batching should keep overhead low");
+        assert!(
+            elapsed < Duration::from_millis(10),
+            "batching should keep overhead low"
+        );
     }
 
     #[tokio::test]

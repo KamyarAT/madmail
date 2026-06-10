@@ -10,7 +10,7 @@ Key categories:
 
 ### Build
 
-- `make build` — normal debug build of `chatmail`
+- `make build` — normal debug build of `madmail`
 - `make build-admin-web` — builds the Svelte SPA from the submodule and stamps `version.json`
 - `make build-with-admin-web` — builds SPA + embeds it into the Rust binary
 - `make build-release` — release + admin web embedded

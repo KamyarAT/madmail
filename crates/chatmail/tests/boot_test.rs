@@ -11,7 +11,7 @@ fn test_binary_boots_and_migrates() {
     let config_path = state_dir.path().join("boot-test.toml");
     let config_path = config_path.to_string_lossy();
 
-    let output = Command::new(cargo_bin("chatmail"))
+    let output = Command::new(cargo_bin("madmail"))
         .args([
             "--state-dir",
             &state_path,

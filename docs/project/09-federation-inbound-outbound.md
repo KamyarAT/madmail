@@ -117,7 +117,7 @@ Visible in admin UI under federation stats. Used for operational decisions ("thi
 ## Testing Federation
 
 - Unit tests in the fed and delivery crates.
-- E2E tests that stand up two chatmail instances and send between them.
+- E2E tests that stand up two madmail instances and send between them.
 - `tests/securejoin_e2e.rs` and Delta Chat p2p tests exercise the full path.
 
 ## Relationship to the Original Madmail

@@ -13,7 +13,7 @@
 
 - The token is in `data/admin_token` (64 hex chars).
 - It is also printed on first boot if you have logging enabled.
-- CLI commands like `chatmail admin-token` read the same file.
+- CLI commands like `madmail admin-token` read the same file.
 - If you overrode it in config to the string "disabled", the whole admin API is gone.
 
 ### Quota looks wrong / users can't receive mail after a crash
@@ -83,9 +83,9 @@ The `logging.rs` module has the reloadable `tracing` subscriber and the special 
 
 1. **Unit tests** inside each crate (`cargo test -p chatmail-pgp` etc.)
 2. **Crate integration tests** (e.g. `chatmail-turn/tests/`)
-3. **Workspace integration tests** (`tests/` crate) — boots real `chatmail` processes, speaks real protocols, exercises ctl binary, checks OpenMetrics, does SecureJoin, exercises TURN, etc.
+3. **Workspace integration tests** (`tests/` crate) — boots real `madmail` processes, speaks real protocols, exercises ctl binary, checks OpenMetrics, does SecureJoin, exercises TURN, etc.
 4. **Delta Chat client E2E** (`make test-deltachat`) — spins up VMs with incus + cmlxc, deploys the exact static binary you just built, runs real Delta Chat desktop and core clients through registration, messaging, calls, etc.
-5. **Throughput benchmarks** (T1) — controlled 1 CPU / 1 GiB environment comparing Go Madmail vs Rust chatmail under load.
+5. **Throughput benchmarks** (T1) — controlled 1 CPU / 1 GiB environment comparing Go Madmail vs Rust madmail under load.
 6. **Manual / relay-ping** against real test servers (`make test-dclogin`).
 
 The higher levels are slow and require extra tooling (incus, uv, cmlxc, sometimes physical test servers), which is why they are not run on every `cargo test`.
@@ -94,7 +94,7 @@ The higher levels are slow and require extra tooling (incus, uv, cmlxc, sometime
 
 - Federation tests are sensitive to timing and port conflicts between parallel runs.
 - TURN tests need the relay to actually be reachable (the force-relay test mode exists for this).
-- Always check that you don't have a stale `target/debug/chatmail` from a previous `make restart` that is still running on old code.
+- Always check that you don't have a stale `target/debug/madmail` from a previous `make restart` that is still running on old code.
 
 ## Next (and Final)
 

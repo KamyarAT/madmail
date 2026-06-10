@@ -5,7 +5,7 @@ Once your chatmail server is running, you will spend most of your time in the ad
 There are two main ways to manage a server:
 
 1. The web admin dashboard (recommended for most day-to-day work)
-2. The `madmail` command-line tool (the binary is also sometimes called `chatmail` in the source, but on most systems you run `madmail`)
+2. The `madmail` command-line tool
 
 Both talk to the same underlying system.
 

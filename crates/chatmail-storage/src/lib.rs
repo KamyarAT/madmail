@@ -17,8 +17,8 @@
 
 pub mod blob;
 pub mod cas;
-pub mod external_store;
 pub mod delivery_batch;
+pub mod external_store;
 pub mod fsync_batch;
 pub mod inbox;
 pub mod maildir;

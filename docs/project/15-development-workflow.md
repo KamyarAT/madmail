@@ -82,7 +82,7 @@ make stop
 # Edit files in external/madmail-admin-web/src/...
 
 # From repo root:
-make build-with-admin-web   # builds SPA + re-embeds + rebuilds chatmail
+make build-with-admin-web   # builds SPA + re-embeds + rebuilds madmail
 make restart
 ```
 
@@ -137,7 +137,7 @@ Many "stub" commands exist that just print "not yet implemented — use the Admi
 
 - `make logs` (follows the nohup log from run-bg)
 - `RUST_LOG=debug,chatmail=trace cargo run ...` for extreme verbosity (when `debug true` is also in the config)
-- `sudo ss -tlnp | grep chatmail` or the admin listener-ports resource to see what is actually bound
+- `sudo ss -tlnp | grep madmail` or the admin listener-ports resource to see what is actually bound
 - `sqlite3 data/chatmail.db "SELECT * FROM federation_stats ORDER BY last_updated DESC LIMIT 20;"`
 - For TURN: the dedicated debug env script `scripts/turn-debug-env.sh`
 

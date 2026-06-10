@@ -88,7 +88,7 @@ If the SPA is not embedded, the server returns a friendly placeholder page telli
 
 ### Why Embed the SPA?
 
-Self-contained deployment. One `scp` of the `chatmail` binary + one restart gives you the full operator UI. No separate nginx + static hosting step.
+Self-contained deployment. One `scp` of the `madmail` binary + one restart gives you the full operator UI. No separate nginx + static hosting step.
 
 ## Relationship to the Old Madmail Admin
 
@@ -110,8 +110,8 @@ The Rust version deliberately reuses the same (or very similar) Svelte source fr
 
 ## Common Operator Workflows
 
-1. Enable registration: Admin UI → Settings → toggle, or `chatmail registration open`
-2. Create a registration token for a specific user: Admin UI or `chatmail registration-tokens create`
+1. Enable registration: Admin UI → Settings → toggle, or `madmail registration open`
+2. Create a registration token for a specific user: Admin UI or `madmail registration-tokens create`
 3. Ban a user: Admin UI blocklist or CLI
 4. Inspect federation health: Admin UI federation tab (uses the tracker stats)
 5. Change message size limit or default quota: settings resource

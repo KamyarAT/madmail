@@ -130,7 +130,11 @@ mod tests {
         coord.commit_directory(&dir).await.unwrap();
         coord.commit_directory(&dir).await.unwrap();
 
-        assert_eq!(coord.pending_count().await, 1, "same dir deduped in pending set");
+        assert_eq!(
+            coord.pending_count().await,
+            1,
+            "same dir deduped in pending set"
+        );
         coord.flush_pending().await.unwrap();
         assert_eq!(coord.pending_count().await, 0, "flush drains pending");
 

@@ -210,7 +210,10 @@ async fn imap_e2e_large_append_streaming_path() {
     create_user(&srv.ctx, &srv.pool, USER, PASS).await;
 
     let mut body = pgp_mime_for_user(USER);
-    body.extend(std::iter::repeat_n(b'X', 70_000usize.saturating_sub(body.len())));
+    body.extend(std::iter::repeat_n(
+        b'X',
+        70_000usize.saturating_sub(body.len()),
+    ));
     assert!(
         body.len() >= srv.ctx.mailbox_store.policy().stream_threshold,
         "body must hit streaming APPEND path"
@@ -228,7 +231,10 @@ async fn imap_e2e_large_append_streaming_path() {
 
     let fetch = c.command("l004 UID FETCH 1 (RFC822.SIZE)").await;
     assert!(fetch.contains("OK FETCH"), "fetch large body: {fetch}");
-    assert!(fetch.contains("RFC822.SIZE 70000"), "size in fetch: {fetch}");
+    assert!(
+        fetch.contains("RFC822.SIZE 70000"),
+        "size in fetch: {fetch}"
+    );
 }
 
 // --- QUOTA (RFC 2087, Madmail GETQUOTA only) ---
@@ -401,7 +407,10 @@ async fn imap_e2e_uids_stable_across_expunge() {
 
     let after = c.command("u007 UID FETCH 1:* (UID)").await;
     assert!(after.contains("UID 1"), "uid 1 kept: {after}");
-    assert!(after.contains("UID 3"), "uid 3 kept (not renumbered): {after}");
+    assert!(
+        after.contains("UID 3"),
+        "uid 3 kept (not renumbered): {after}"
+    );
     assert!(
         !after.contains("UID 2"),
         "expunged UID 2 must not reappear or be reused: {after}"

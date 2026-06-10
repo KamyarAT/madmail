@@ -2,7 +2,7 @@
 
 ## The Big Picture
 
-**madmailv2** (working name; the Rust binary and crate is called **`chatmail`**) is a complete, production-grade, privacy-first federated email server designed specifically for **Delta Chat** users.
+**madmail** (this project; workspace crate `chatmail`, binary `madmail`) is a complete, production-grade, privacy-first federated email server designed specifically for **Delta Chat** users. It implements the **chatmail** relay protocol.
 
 It is a **Rust rewrite** of the original Madmail (a heavily customized fork of the Go `maddy` mail server).
 
@@ -23,7 +23,7 @@ The goal of the rewrite is:
 3. **HTTP-based federation preferred** (`POST /mxdeliv`) with SMTP fallback. This enables fast, reliable inter-server chatmail delivery.
 4. **Strong privacy defaults** — No-Log mode, minimal logging, no plaintext storage of sensitive data.
 5. **Built-in real-time support** — TURN server for Delta Chat voice/video calls (WebRTC), Iroh relay for WebXDC / p2p data.
-6. **Operator-friendly** — single binary, rich CLI (`chatmail ctl ...`), JSON-RPC admin API, optional beautiful Svelte admin web UI embedded in the binary.
+6. **Operator-friendly** — single binary, rich CLI (`madmail ...`), JSON-RPC admin API, optional beautiful Svelte admin web UI embedded in the binary.
 7. **Stealth / camouflage deployment** possible (Shadowsocks proxy mode).
 
 ## Why Delta Chat Needs This
@@ -58,12 +58,12 @@ The project has followed a very disciplined phased implementation (see `docs/pla
 - Static release binaries for easy deployment on Debian and similar.
 - Rich CLI parity with Madmail in progress (many commands implemented, some still stubs that delegate to Admin API).
 
-## What "chatmail" Means in This Codebase
+## Naming: chatmail vs madmail
 
-- The **product** is still often called Chatmail or Madmail by operators.
-- The **Rust binary** you run is `chatmail` (installed as `/usr/local/bin/madmail` on many test hosts).
-- The **workspace member** is `chatmail`.
-- Config files historically used `maddy.conf` syntax; the Rust version also accepts `chatmail.toml`.
+- **Chatmail** — the relay protocol and server *concept* (JIT accounts, PGP-only, HTTP federation, TURN metadata, etc.). Any server that speaks this protocol is a *chatmail relay* (madmail, cmdeploy stacks, etc.).
+- **madmail** — this project and its CLI tool / binary (`target/release/madmail`, typically installed as `/usr/local/bin/madmail`).
+- **`chatmail` crate** — the main Rust workspace member under `crates/chatmail/` (library + binary entry point). Crate names like `chatmail-smtp` are internal module names, not the operator-facing tool.
+- Config files historically used `maddy.conf` syntax; the Rust version also accepts `chatmail.toml` (filename unchanged).
 
 ## Next Step
 

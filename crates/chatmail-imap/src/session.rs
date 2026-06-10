@@ -24,10 +24,10 @@ use chatmail_iroh::IrohDiscovery;
 use chatmail_pgp::{enforce_encryption, EnforceOptions};
 use chatmail_state::{AppState, NewMessageEvent};
 use chatmail_storage::{
-    copy_message, expunge_deleted, list_mailbox_messages, mailbox_exists, move_message, read_blob,
-    read_blob_known, read_blob_range_known, store_add_flags, write_blob_mailbox,
-    commit_mailbox_blob_from_tmp, stream_append_to_tmp, stream_append_direct_final_no_hash, StoredMessage,
-    storage_policy::FsyncMode,
+    commit_mailbox_blob_from_tmp, copy_message, expunge_deleted, list_mailbox_messages,
+    mailbox_exists, move_message, read_blob, read_blob_known, read_blob_range_known,
+    storage_policy::FsyncMode, store_add_flags, stream_append_direct_final_no_hash,
+    stream_append_to_tmp, write_blob_mailbox, StoredMessage,
 };
 use chatmail_turn::TurnDiscovery;
 use chatmail_types::{ChatmailError, Result};
@@ -961,36 +961,43 @@ impl ImapSession {
             if size >= stream_threshold {
                 let msg_id = uuid::Uuid::new_v4().to_string();
 
-                let (tmp_path, header, hash, written) = if self.ctx.mailbox_store.policy().fsync_mode == FsyncMode::Never {
-                    // Ultra-fast Dovecot-like path for never + large distinct: direct to final
-                    // location, no hashing, no CAS. File is already in new/ when we return.
-                    let (written, header) = stream_append_direct_final_no_hash(
-                        &self.ctx.mailbox_store,
-                        user,
-                        &mailbox,
-                        &msg_id,
-                        lines,
-                        size as u64,
-                    )
-                    .await?;
-                    // tmp_path here is actually the final path; dummy hash is ignored downstream
-                    // because we short-circuit commit for Never.
-                    (self.ctx.mailbox_store.maildir_for_mailbox(user, &mailbox).new.join(&msg_id),
-                     header,
-                     [0u8; 32],
-                     written)
-                } else {
-                    // Normal path (with hashing for CAS)
-                    stream_append_to_tmp(
-                        &self.ctx.mailbox_store,
-                        user,
-                        &mailbox,
-                        &msg_id,
-                        lines,
-                        size as u64,
-                    )
-                    .await?
-                };
+                let (tmp_path, header, hash, written) =
+                    if self.ctx.mailbox_store.policy().fsync_mode == FsyncMode::Never {
+                        // Ultra-fast Dovecot-like path for never + large distinct: direct to final
+                        // location, no hashing, no CAS. File is already in new/ when we return.
+                        let (written, header) = stream_append_direct_final_no_hash(
+                            &self.ctx.mailbox_store,
+                            user,
+                            &mailbox,
+                            &msg_id,
+                            lines,
+                            size as u64,
+                        )
+                        .await?;
+                        // tmp_path here is actually the final path; dummy hash is ignored downstream
+                        // because we short-circuit commit for Never.
+                        (
+                            self.ctx
+                                .mailbox_store
+                                .maildir_for_mailbox(user, &mailbox)
+                                .new
+                                .join(&msg_id),
+                            header,
+                            [0u8; 32],
+                            written,
+                        )
+                    } else {
+                        // Normal path (with hashing for CAS)
+                        stream_append_to_tmp(
+                            &self.ctx.mailbox_store,
+                            user,
+                            &mailbox,
+                            &msg_id,
+                            lines,
+                            size as u64,
+                        )
+                        .await?
+                    };
                 let mut extra = String::new();
                 lines.read_line(&mut extra).await?;
                 // PGP / Secure-Join enforcement only needs the header region (the
@@ -1013,7 +1020,9 @@ impl ImapSession {
                 // Under mail_fsync=never + large distinct message we use the direct-to-final
                 // no-hash path above. The file is already in its final location in new/.
                 // Skip the entire commit/CAS machinery (another Dovecot "when never, do almost nothing" match).
-                if self.ctx.mailbox_store.policy().fsync_mode != chatmail_storage::storage_policy::FsyncMode::Never {
+                if self.ctx.mailbox_store.policy().fsync_mode
+                    != chatmail_storage::storage_policy::FsyncMode::Never
+                {
                     commit_mailbox_blob_from_tmp(
                         &self.ctx.mailbox_store,
                         user,
@@ -1079,14 +1088,7 @@ impl ImapSession {
         )?;
         self.ctx.quota.check_quota(user, written_len as u64)?;
         let msg_id = uuid::Uuid::new_v4().to_string();
-        write_blob_mailbox(
-            &self.ctx.mailbox_store,
-            user,
-            &mailbox,
-            &msg_id,
-            &literal,
-        )
-        .await?;
+        write_blob_mailbox(&self.ctx.mailbox_store, user, &mailbox, &msg_id, &literal).await?;
         self.ctx.quota.record_write(user, written_len as u64);
         self.ctx.events.notify_new_message(user, &msg_id);
         self.announced_exists = self.announced_exists.saturating_add(1);
@@ -2449,7 +2451,10 @@ mod integration_tests {
         .await;
         assert!(t.contains("OK APPEND"), "large append: {t}");
         assert!(t.contains("* 1 EXISTS"), "select after large append: {t}");
-        assert!(t.contains(&format!("RFC822.SIZE {}", body.len())), "size: {t}");
+        assert!(
+            t.contains(&format!("RFC822.SIZE {}", body.len())),
+            "size: {t}"
+        );
 
         let new_dir = ctx.mailbox_store.maildir_for_user("u@test").new;
         let entries: Vec<_> = std::fs::read_dir(&new_dir)
@@ -2459,8 +2464,12 @@ mod integration_tests {
         assert_eq!(entries.len(), 1, "exactly one maildir entry");
         assert_eq!(std::fs::read(&entries[0]).unwrap(), body);
 
-        let blob_root = dir.path().join("blobs");
-        assert!(blob_root.exists(), "CAS store should hold canonical blob");
+        // First distinct write under CAS defers canonical blob population (Dovecot-style
+        // fast path); the message lives only in maildir until a dedup hit ingests CAS.
+        assert!(
+            !dir.path().join("blobs").exists(),
+            "first distinct streaming append must not populate CAS canonical yet"
+        );
     }
 
     /// P11-UT17: streaming APPEND rejects plaintext and leaves no `new/` or `tmp/` artifacts.
@@ -2488,8 +2497,7 @@ mod integration_tests {
             ..(*ctx).clone()
         });
 
-        let plain_header =
-            b"From: u@test\r\nSubject: x\r\nContent-Type: text/plain\r\n\r\n";
+        let plain_header = b"From: u@test\r\nSubject: x\r\nContent-Type: text/plain\r\n\r\n";
         let mut plain = plain_header.to_vec();
         plain.extend(std::iter::repeat_n(b'n', 2048 - plain.len()));
 
@@ -2514,14 +2522,22 @@ mod integration_tests {
         session.selected_mailbox = Some("INBOX".into());
         let mut reader = BufReader::new(Cursor::new(payload));
         let err = session
-            .handle_append(&mut reader, "z001", &format!("INBOX {{{}}}", plain.len()), "u@test")
+            .handle_append(
+                &mut reader,
+                "z001",
+                &format!("INBOX {{{}}}", plain.len()),
+                "u@test",
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, ChatmailError::EncryptionNeeded(_)));
 
         let paths = ctx.mailbox_store.maildir_for_user("u@test");
         assert!(
-            std::fs::read_dir(&paths.new).map(|mut d| d.next()).unwrap().is_none(),
+            std::fs::read_dir(&paths.new)
+                .map(|mut d| d.next())
+                .unwrap()
+                .is_none(),
             "rejected append must not create new/ entry"
         );
         assert!(

@@ -24,7 +24,7 @@ use crate::install_cli::{CertificateCommand, InstallArgs};
 /// Global CLI (Madmail-compatible subcommands; see `docs/TDD/14-cli-tools.md`).
 #[derive(Debug, Parser, Clone)]
 #[command(
-    name = "chatmail",
+    name = "madmail",
     about = "Chatmail mail server (Madmail-compatible CLI)",
     long_about = "Composable Chatmail server. Use `run` to start SMTP/IMAP/HTTP.\n\
                   Operator tools mirror `madmail` / `maddy` (accounts, federation, admin-token, …).\n\

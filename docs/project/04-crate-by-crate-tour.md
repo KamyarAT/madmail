@@ -8,7 +8,7 @@ This is your map of the Rust source. For each crate you will find:
 
 ## Binary & Top-Level Orchestration
 
-### `chatmail` (the binary crate)
+### `chatmail` (main crate; builds the `madmail` binary)
 
 **Purpose**: Process entry point, lifecycle, CLI, server supervision, boot, upgrade.
 

@@ -69,7 +69,7 @@ Global flags that affect boot:
 - `--debug`
 - `--boot-once` (tests)
 
-Every `chatmail <subcommand>` also has its own flags.
+Every `madmail <subcommand>` also has its own flags.
 
 The CLI values are merged on top of file + DB in various `effective_*` functions.
 
@@ -141,7 +141,7 @@ Trace the path:
 ## Debugging Config
 
 Useful commands / techniques:
-- `chatmail status` or the admin status resource
+- `madmail status` or the admin status resource
 - `sqlite3 data/chatmail.db "SELECT * FROM settings;"`
 - `sqlite3 data/chatmail.db "SELECT * FROM mail_ports;"`
 - `cat data/chatmail.toml`
