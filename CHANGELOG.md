@@ -1,3 +1,15 @@
+# [2.5.0](https://github.com/themadorg/madmail/compare/v2.4.1...v2.5.0) (2026-06-11)
+
+
+### Bug Fixes
+
+* **install:** enhance configuration handling and systemd integration ([2588673](https://github.com/themadorg/madmail/commit/25886730908a715f1746ebccd25681df4c82c7e6))
+
+
+### Features
+
+* **cli:** enhance command-line interface with new features and improvements ([bbd84b8](https://github.com/themadorg/madmail/commit/bbd84b810c96acfa9a2355a7ac02a4e5190900db))
+
 ## [2.4.1](https://github.com/themadorg/madmail/compare/v2.4.0...v2.4.1) (2026-06-10)
 
 
