@@ -88,8 +88,7 @@ pub(crate) fn argv_has_state_dir_flag() -> bool {
 
 /// Apply auto-detected `./data` paths when the user did not pass `--config` / `--state-dir` (or env).
 pub fn apply_cli_defaults(args: &mut crate::cli::Args) {
-    if !argv_has_state_dir_flag() && std::env::var("CHATMAIL_STATE_DIR").is_err()
-    {
+    if !argv_has_state_dir_flag() && std::env::var("CHATMAIL_STATE_DIR").is_err() {
         args.state_dir = detect_default_state_dir();
     }
     if !argv_has_flag("--config") && std::env::var("CHATMAIL_CONFIG").is_err() {

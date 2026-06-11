@@ -166,7 +166,7 @@ Run: `cargo test -p chatmail-admin`
 
 ## Public web UI (`www`)
 
-Madmail embeds `internal/endpoint/chatmail/www/` as the main site (index, docs, `/new`, `/qr`, static CSS/JS). chatmail-rs serves the same tree from `crates/chatmail-www` (source: `www-src/`, build-time Go→Minijinja conversion, `rust-embed`).
+Madmail embeds `internal/endpoint/chatmail/www/` as the main site (index, docs, `/new`, `/qr`, static CSS/JS). chatmail-rs serves the same tree from `crates/chatmail-www` (source: `www-src/`, build-time, `rust-embed`).
 
 | Path | Purpose |
 |------|---------|

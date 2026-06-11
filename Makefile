@@ -3,7 +3,7 @@
 # Madmail (Go/maddy) originals: build.sh, systemd install, sign/deploy.
 # Deploy: `make push` builds release chatmail, scp's to test servers, replaces binary, restarts systemd (no signing).
 
-.PHONY: all init build build-admin-web build-chatmail-embed build-chatmail-embed-release build-with-admin-web build-release build-profiling build-release-static build-workspace build-all \
+.PHONY: all init build build-admin-web build-chatmail-embed build-chatmail-embed-release build-with-admin-web build-release build-profiling build-release-static build-workspace build-all build-landing preview-landing \
 	test test-unit test-integration test-e2e test-maintenance test-imap test-turn test-core-turn test-deltachat test-dclogin relay-ping-build relay-ping-clean t1-bench t1-report-demo \
 	check vet lint fmt fmt-check run run-bg run-debug restart stop logs reset-db dev-certs clean help \
 	sign push push1 push2 log1 log2 push-signed publish init-publish build-publish \
@@ -39,6 +39,7 @@ REMOTE2          ?=
 # Madmail admin-web submodule (external/madmail-admin-web). Override in .env if needed.
 ADMIN_WEB_DIR    ?= external/madmail-admin-web
 ADMIN_WEB_BUILD  := $(ADMIN_WEB_DIR)/build
+LANDING_DIR      ?= landing
 
 # scripts/publish.sh flags (e.g. --no-github-release). Not the `init` target — use `make init publish`.
 PUBLISH_ARGS ?=
@@ -160,6 +161,15 @@ build-release-static:
 
 build-workspace:
 	cargo build --workspace
+
+# Static SvelteKit site (landing/): docs site + marketing pages for GitHub Pages.
+build-landing:
+	@command -v bun >/dev/null || { echo "build-landing needs bun: https://bun.sh"; exit 1; }
+	cd $(LANDING_DIR) && bun install && bun run build
+
+preview-landing:
+	@command -v bun >/dev/null || { echo "preview-landing needs bun: https://bun.sh"; exit 1; }
+	cd $(LANDING_DIR) && bun run preview
 
 # Cross-compile release binaries (requires rustup targets installed)
 build-all: build-release
@@ -406,8 +416,8 @@ man-check: man-lint
 help:
 	@echo "chatmail-rs Makefile (from context/madmail/Makefile)"
 	@echo ""
-	@echo "Build:     build (Rust only), build-admin-web ($(ADMIN_WEB_DIR) SPA), build-with-admin-web (SPA+embed+Rust), build-release, build-profiling (release + pprof), build-release-static"
-	@echo "Run:       run, restart, dev-certs, dev-bind-cap (Linux <1024 ports), reset-db, install"
+	@echo "Build:     build (Rust only), build-admin-web ($(ADMIN_WEB_DIR) SPA), build-with-admin-web (SPA+embed+Rust), build-release, build-profiling (release + pprof), build-release-static, build-landing ($(LANDING_DIR) static site)"
+	@echo "Run:       run, restart, dev-certs, dev-bind-cap (Linux <1024 ports), reset-db, install, preview-landing"
 	@echo "Admin UI:  edit $(ADMIN_WEB_DIR) → make build-with-admin-web → make restart"
 	@echo "Deploy:    push, push1 (unsigned), push2 (static+sign+upgrade), push-signed, sign (scripts/sign.sh), log1, log2 (scripts/deploy.sh)"
 	@echo "Test:      test, test-unit, test-e2e, test-maintenance, test-integration, test-imap, test-turn, test-deltachat, test-dclogin"

@@ -29,7 +29,7 @@ Madmail publishes official container images to **GitHub Container Registry (GHCR
   - [TLS quick reference](#tls-quick-reference)
 - [Ports](#ports)
 - [Volumes and layout](#volumes-and-layout)
-- [Environment variables](#environment-variables-default-config)
+- [Environment variables](#environment-variables-bundled-config-only)
 - [Custom configuration](#custom-configuration)
 - [Migrate from systemd](#migrate-from-a-native-systemd-install)
 - [Docker Compose example](#docker-compose-example)

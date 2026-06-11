@@ -59,3 +59,11 @@ path = "ctl_ops_e2e.rs"
 [[test]]
 name = "openmetrics_e2e"
 path = "openmetrics_e2e.rs"
+
+[[test]]
+name = "memory_leak_probe"
+path = "memory_leak_probe.rs"
+
+[[test]]
+name = "memory_week_simulation"
+path = "memory_week_simulation.rs"
