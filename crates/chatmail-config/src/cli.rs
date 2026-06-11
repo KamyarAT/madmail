@@ -664,7 +664,18 @@ impl Cli {
     pub fn parse_normalized() -> Self {
         let mut cli = Self::parse();
         crate::paths::apply_cli_defaults(&mut cli.args);
+        clear_install_path_flag_bleed(&mut cli);
         cli
+    }
+}
+
+/// Global `--state-dir` carries a production default; clap also fills install's optional
+/// `state_dir` with that value. Clear it unless the user passed `--state-dir` / `--libexec`.
+fn clear_install_path_flag_bleed(cli: &mut Cli) {
+    if !crate::paths::argv_has_state_dir_flag() {
+        if let Some(Command::Install(ref mut args)) = cli.command {
+            args.state_dir = None;
+        }
     }
 }
 
@@ -803,8 +814,9 @@ mod tests {
 
     #[test]
     fn default_install_subcommand_flags_are_unset() {
-        let cli =
+        let mut cli =
             Cli::try_parse_from(["madmail", "install", "--simple", "--ip", "1.2.3.4"]).unwrap();
+        clear_install_path_flag_bleed(&mut cli);
         let Some(Command::Install(args)) = cli.command else {
             panic!("expected install subcommand");
         };

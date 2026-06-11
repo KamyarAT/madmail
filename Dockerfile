@@ -23,6 +23,7 @@ WORKDIR /madmail
 COPY Cargo.toml Cargo.lock ./
 COPY .cargo ./.cargo
 COPY crates ./crates
+COPY docs/man ./docs/man
 COPY tests/Cargo.toml ./tests/Cargo.toml
 
 COPY external/madmail-admin-web/package.json external/madmail-admin-web/bun.lock* ./external/madmail-admin-web/

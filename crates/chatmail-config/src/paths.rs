@@ -81,11 +81,14 @@ fn argv_has_flag(flag: &str) -> bool {
     std::env::args().any(|a| a == flag || a.starts_with(&format!("{flag}=")))
 }
 
+/// True when the process argv includes an explicit `--state-dir` or `--libexec`.
+pub(crate) fn argv_has_state_dir_flag() -> bool {
+    argv_has_flag("--state-dir") || argv_has_flag("--libexec")
+}
+
 /// Apply auto-detected `./data` paths when the user did not pass `--config` / `--state-dir` (or env).
 pub fn apply_cli_defaults(args: &mut crate::cli::Args) {
-    if !argv_has_flag("--state-dir")
-        && !argv_has_flag("--libexec")
-        && std::env::var("CHATMAIL_STATE_DIR").is_err()
+    if !argv_has_state_dir_flag() && std::env::var("CHATMAIL_STATE_DIR").is_err()
     {
         args.state_dir = detect_default_state_dir();
     }
