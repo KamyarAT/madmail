@@ -3,8 +3,11 @@
 //!   - 3000 messages/day for 7 days
 //!   - Observed: ~400 MiB → ~1 GiB RSS over one week
 //!
+//! These are **manual probes** (multi-minute runtime). They are `#[ignore]` so default
+//! `cargo test --workspace` in CI skips them.
+//!
 //! Run (release, closest to production):
-//!   cargo test -p chatmail-integration --test memory_week_simulation --release -- --nocapture
+//!   cargo test -p chatmail-integration --test memory_week_simulation --release -- --ignored --nocapture
 
 mod support;
 
@@ -68,6 +71,21 @@ impl Snapshot {
     }
 }
 
+async fn init_simulation_ctx(
+    dir: &std::path::Path,
+    cfg: &AppConfig,
+) -> (Arc<AppState>, chatmail_db::DbPool) {
+    let pool = chatmail_db::init_memory_db().await.expect("db");
+    let ctx = Arc::new(AppState::with_quota_and_message_limit(
+        dir,
+        chatmail_config::DEFAULT_QUOTA_BYTES,
+        cfg,
+        pool.clone(),
+    ));
+    ctx.hydrate(&pool, cfg).await.expect("hydrate");
+    (ctx, pool)
+}
+
 async fn seed_users(ctx: &AppState, pool: &chatmail_db::DbPool, total: usize, active: usize) {
     for i in 0..total {
         let user = format!("usr{i:04}@test");
@@ -80,18 +98,14 @@ async fn seed_users(ctx: &AppState, pool: &chatmail_db::DbPool, total: usize, ac
 
 /// Model A: 3000 accounts, 300 active maildirs, 3000 msgs/day split across actives (~10/user/day).
 #[tokio::test]
+#[ignore = "manual week-scale memory probe; run with --ignored"]
 async fn simulate_week_3000_users_300_active_3000_msgs_per_day() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let pool = chatmail_db::init_memory_db().await.expect("db");
-    let ctx = Arc::new(AppState::new(dir.path(), pool.clone()));
-    ctx.hydrate(&pool, &AppConfig::default())
-        .await
-        .expect("hydrate");
+    let cfg = AppConfig::default();
+    let (ctx, pool) = init_simulation_ctx(dir.path(), &cfg).await;
 
     seed_users(&ctx, &pool, TOTAL_USERS, ACTIVE_USERS).await;
-    ctx.hydrate(&pool, &AppConfig::default())
-        .await
-        .expect("rehydrate");
+    ctx.hydrate(&pool, &cfg).await.expect("rehydrate");
 
     let baseline = Snapshot::take(&ctx, "day0-baseline");
     baseline.print(&baseline);
@@ -134,15 +148,13 @@ async fn simulate_week_3000_users_300_active_3000_msgs_per_day() {
 
 /// Model B: same traffic but messages round-robin across ALL 3000 users (worst-case map growth).
 #[tokio::test]
+#[ignore = "manual week-scale memory probe; run with --ignored"]
 async fn simulate_week_messages_touch_all_3000_users() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let pool = chatmail_db::init_memory_db().await.expect("db");
-    let ctx = Arc::new(AppState::new(dir.path(), pool.clone()));
+    let cfg = AppConfig::default();
+    let (ctx, pool) = init_simulation_ctx(dir.path(), &cfg).await;
 
     seed_users(&ctx, &pool, TOTAL_USERS, ACTIVE_USERS).await;
-    ctx.hydrate(&pool, &AppConfig::default())
-        .await
-        .expect("hydrate");
 
     let baseline = Snapshot::take(&ctx, "day0");
     baseline.print(&baseline);
@@ -174,6 +186,7 @@ async fn simulate_week_messages_touch_all_3000_users() {
 
 /// Model C: `mail_fsync=never` + CAS (relay config) — DeliveryBatcher worker leak per mailbox.
 #[tokio::test]
+#[ignore = "manual week-scale memory probe; run with --ignored"]
 async fn simulate_week_never_cas_300_active_users() {
     let dir = tempfile::tempdir().expect("tempdir");
     let cfg = AppConfig {
@@ -181,13 +194,7 @@ async fn simulate_week_never_cas_300_active_users() {
         blob_dedup: Some("on".into()),
         ..Default::default()
     };
-    let pool = chatmail_db::init_memory_db().await.expect("db");
-    let ctx = Arc::new(AppState::with_quota_and_message_limit(
-        dir.path(),
-        chatmail_config::DEFAULT_QUOTA_BYTES,
-        &cfg,
-        pool.clone(),
-    ));
+    let (ctx, pool) = init_simulation_ctx(dir.path(), &cfg).await;
     seed_users(&ctx, &pool, TOTAL_USERS, ACTIVE_USERS).await;
 
     let baseline = Snapshot::take(&ctx, "day0-never");
@@ -215,6 +222,7 @@ async fn simulate_week_never_cas_300_active_users() {
 
 /// Model D: 300 concurrent IMAP IDLE sessions polling (Delta Chat style) on live server.
 #[tokio::test]
+#[ignore = "manual week-scale memory probe; run with --ignored"]
 async fn simulate_week_300_imap_idle_connections() {
     let dir = tempfile::tempdir().expect("tempdir");
     let srv = spawn_mail_servers_opts(
@@ -279,12 +287,13 @@ async fn simulate_week_300_imap_idle_connections() {
 
 /// Model E: group-chat fan-out — 50 SMTP messages/day × 60 local recipients = 3000 deliveries/day.
 #[tokio::test]
+#[ignore = "manual week-scale memory probe; run with --ignored"]
 async fn simulate_week_group_fanout_60_recipients() {
     use chatmail_storage::deliver_local_messages;
 
     let dir = tempfile::tempdir().expect("tempdir");
-    let pool = chatmail_db::init_memory_db().await.expect("db");
-    let ctx = Arc::new(AppState::new(dir.path(), pool.clone()));
+    let cfg = AppConfig::default();
+    let (ctx, pool) = init_simulation_ctx(dir.path(), &cfg).await;
     seed_users(&ctx, &pool, TOTAL_USERS, ACTIVE_USERS).await;
 
     let baseline = Snapshot::take(&ctx, "fanout-day0");
@@ -331,19 +340,17 @@ async fn simulate_week_group_fanout_60_recipients() {
 
 /// Model F: all 3000 users receive mail (1 msg/user/day) + daily INBOX list for every user.
 #[tokio::test]
+#[ignore = "manual week-scale memory probe; run with --ignored"]
 async fn simulate_week_all_3000_users_receive_and_list_daily() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let pool = chatmail_db::init_memory_db().await.expect("db");
-    let ctx = Arc::new(AppState::new(dir.path(), pool.clone()));
+    let cfg = AppConfig::default();
+    let (ctx, pool) = init_simulation_ctx(dir.path(), &cfg).await;
 
     for i in 0..TOTAL_USERS {
         let user = format!("usr{i:04}@test");
         create_user(&ctx, &pool, &user, "secret-pass").await;
         ctx.mailbox_store.init_user_dir(&user).await.expect("init");
     }
-    ctx.hydrate(&pool, &AppConfig::default())
-        .await
-        .expect("hydrate");
 
     let baseline = Snapshot::take(&ctx, "allrecv-day0");
     baseline.print(&baseline);
@@ -366,9 +373,17 @@ async fn simulate_week_all_3000_users_receive_and_list_daily() {
 
 /// Model G: 300 active users but NO purge — 1000 msgs/mailbox in cache (≈6 weeks at 10/day, or no auto-purge).
 #[tokio::test]
+#[ignore = "manual week-scale memory probe; run with --ignored"]
 async fn simulate_large_mailbox_cache_300_users_1000_msgs() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let store = MailboxStore::new(dir.path());
+    // Disable CAS: identical bodies would hard-link to one blob and hit EMLINK (~65k links).
+    let store = MailboxStore::with_policy(
+        dir.path(),
+        StoragePolicy {
+            cas_enabled: false,
+            ..StoragePolicy::default()
+        },
+    );
     const USERS: usize = 300;
     const MSGS: usize = 1000;
     let body = vec![b'm'; 2048];
@@ -413,6 +428,7 @@ async fn simulate_large_mailbox_cache_300_users_1000_msgs() {
 
 /// Isolate clone-on-cache-hit churn (no new deliveries after day 1).
 #[tokio::test]
+#[ignore = "manual week-scale memory probe; run with --ignored"]
 async fn simulate_allocator_churn_from_cache_clones() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = MailboxStore::with_policy(

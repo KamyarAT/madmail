@@ -1,6 +1,6 @@
 # Authentication & JIT Registration
 
-**Implementation:** `crates/chatmail-auth` (`jit`, `hash`, `validate`), `chatmail-state::AuthCache`, `jit_flights` (per-user login coalescing), wired from IMAP/SMTP/Web handlers.
+**Implementation:** `crates/chatmail-auth` (`jit`, `hash`, `validate`, `normalize`), `chatmail-state::AuthCache`, `jit_flights` (per-user login coalescing), wired from IMAP/SMTP/Web handlers.
 
 **Operator CLI:** [`../guide/cli/registration.md`](../guide/cli/registration.md) · [`registration-tokens.md`](../guide/cli/registration-tokens.md) · [`accounts.md`](../guide/cli/accounts.md) · [`blocklist.md`](../guide/cli/blocklist.md).
 
@@ -13,7 +13,7 @@ Core Chatmail feature:
 
 ## Flow
 
-1. Normalize username (PRECIS)
+1. Normalize username (`normalize_username` — ASCII lowercasing + IP bracket wrapping; Madmail parity, not RFC 8264/8265 PRECIS)
 2. **Blocklist check** — in-memory cache (`AuthCache::is_blocked`), hydrated from DB at boot / soft reload
 3. Lookup hash in **credentials cache** (`AuthCache::get_hash`)
 4. If not found:
@@ -79,7 +79,8 @@ Built by `chatmail-config::build_dclogin_link`; www templates use `connectHostFo
 
 ## Security
 
-- Bcrypt (or Argon2) for password hashing
+- **JIT create** writes `bcrypt:` hashes only
+- **Verify** supports `bcrypt`, `argon2`, `sha256`, and POSIX `sha-crypt` (Madmail import parity)
 - No plaintext passwords ever stored or returned
 - Account creation **not** possible via Admin API (intentional)
 

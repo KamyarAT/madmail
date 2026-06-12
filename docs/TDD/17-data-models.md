@@ -1,8 +1,10 @@
-# Data models (Madmail-compatible SQLite)
+# Data models (Madmail-compatible SQL)
 
-madmail-v2 uses **one consolidated SQLite database** (`state_dir/chatmail.db`) containing the Madmail **imapsql** extension tables. Madmail splits `credentials.db` (auth KV) and `imapsql.db` (everything else); madmail-v2 can still read Madmail `passwords` tables that use `key`/`value` columns.
+madmail-v2 uses **one consolidated database** (`state_dir/chatmail.db` for SQLite, or Postgres DSN from `maddy.conf`) containing the Madmail **imapsql** extension tables. Madmail splits `credentials.db` (auth KV) and `imapsql.db` (everything else); madmail-v2 can still read Madmail `passwords` tables that use `key`/`value` columns.
 
-Schema source of truth in code: `crates/chatmail-db/migrations/`.
+**Backends:** SQLite (default) and **Postgres** (`DbPool::Postgres`, `migrations/postgres/`). Postgres supports Madmail schema import plus extension migrations.
+
+Schema source of truth in code: `crates/chatmail-db/migrations/` (SQLite + Postgres variants).
 
 Madmail GORM models: [`context/madmail/internal/db/models.go`](../../context/madmail/internal/db/models.go).
 
@@ -15,14 +17,17 @@ Madmail GORM models: [`context/madmail/internal/db/models.go`](../../context/mad
 
 Compatible with Madmail `settings_table` / credentials DB KV.
 
-Notable madmail-v2 keys (full list: `chatmail-db::settings_keys`):
+**Full key catalogue** (names, defaults, admin paths, usage): [`13-configuration.md`](13-configuration.md#dynamic-settings-database). Source of truth in code: `chatmail-db::settings_keys`.
+
+Sample keys:
 
 | Key | CLI / admin | Notes |
 |-----|-------------|-------|
+| `__REGISTRATION_OPEN__` | [`registration`](../guide/cli/registration.md) | `/new` gate (default `false`) |
 | `__MESSAGE_RETENTION_ENABLED__` | admin settings | Hourly maildir purge toggle |
 | `__MESSAGE_RETENTION__` | admin settings | Duration (`30d`, `720h`, …) |
 | `__APPENDLIMIT__` / `__MAX_MESSAGE_SIZE__` | [`message-size`](../guide/cli/message-size.md) | Effective cap (min of both) |
-| `__PUSH_MODE__` | [`push`](../guide/cli/push.md) | `auto` / `on` / `off` |
+| `__PUSH_MODE__` | [`push`](../guide/cli/push.md) | `auto` / `on` / `off` (default `off`) |
 | `__WEBIMAP_ENABLED__` / `__WEBSMTP_ENABLED__` | [`webimap`](../guide/cli/webimap.md) | HTTP mail APIs |
 | `__SMTP_PORT__`, … | [`port`](../guide/cli/port.md) | Listener overrides |
 
@@ -98,6 +103,28 @@ Madmail shape (migrated in `20240401000000_madmail_compat.sql`):
 
 Policy mode is global (`__FEDERATION_POLICY__` = `ACCEPT` or `REJECT`); rows are blocklist (ACCEPT) or allowlist (REJECT).
 
+## `federation_silent_dismiss`
+
+Outbound federation domains whose mail is accepted but not delivered (Madmail `federation dismiss` parity).
+
+| Column | Type |
+|--------|------|
+| `domain` | TEXT PK |
+| `created_at` | INTEGER unix |
+
+Managed via `/admin/federation/silent-dismiss` and CLI `madmail federation dismiss`. Cached in `chatmail-state::FederationSilentDismissCache`.
+
+## `mailbox_modseq`
+
+Durable per-user INBOX modseq / change-id (monotonic across restarts).
+
+| Column | Type |
+|--------|------|
+| `username` | TEXT PK |
+| `modseq` | INTEGER |
+
+Seeds `chatmail-state::EventBus` at boot; flushed every 30s by `flusher`. Required for future CONDSTORE/QRESYNC-style delta sync.
+
 ## `federation_server_stats`
 
 Per-domain counters flushed from `FederationTracker` every 30s. Columns match Madmail `FederationStat` snapshot fields.
@@ -134,12 +161,24 @@ Pull-based ingress relays (optional):
 
 PK (`username`, `device_token`). Populated via IMAP `SETMETADATA /private/devicetoken` (`XDELTAPUSH`). Pruned after 90 days without refresh; stale tokens removed on HTTP 410 from `notifications.delta.chat`. See [23-push-notifications.md](23-push-notifications.md).
 
+## Contact sharing (`sharing.db`)
+
+Separate SQLite file (`{state_dir}/sharing.db`) — not in `chatmail.db`. Managed by `chatmail-db::sharing`.
+
+| Column | Type |
+|--------|------|
+| `slug` | TEXT PK |
+| `url` | TEXT |
+| `name` | TEXT |
+| `created_at` | TEXT |
+
+CLI: `madmail sharing` (create/list/delete). Admin HTTP `/admin/shares` not yet implemented.
+
 ## Not replicated (Madmail-only)
 
 | Madmail | Reason |
 |---------|--------|
 | go-imap-sql `users` / `mboxes` / `msgs` | madmail-v2 uses Maildir blobs under `state_dir/mail/` |
-| `contacts` (`sharing.db`) | Contact sharing not in Phase 1–8 scope |
 | `table_entries` legacy GORM KV | Superseded by `settings` |
 
 ## Mail storage (filesystem)
@@ -168,7 +207,10 @@ Full module map: [`04-storage-layer.md`](04-storage-layer.md).
 | Port overrides | `crates/chatmail-db/src/mail_ports.rs` |
 | Dormant accounts | `crates/chatmail-db/src/maintenance.rs` |
 | Federation inbound checks | `crates/chatmail-db/src/inbound.rs` |
+| Silent dismiss | `crates/chatmail-db` + `chatmail-state::silent_dismiss` |
 | IMAP MODSEQ persistence | `crates/chatmail-db/src/modseq.rs` |
+| Contact sharing | `crates/chatmail-db/src/sharing.rs` |
+| Postgres pool | `crates/chatmail-db/src/pool.rs` |
 | Quota / policy RAM | `crates/chatmail-state/` |
 | CLI operators | [`../guide/cli/README.md`](../guide/cli/README.md) |
 

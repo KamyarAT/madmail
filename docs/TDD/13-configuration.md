@@ -48,7 +48,7 @@ Environment substitution `{env:VAR}` in values is expanded when the variable is 
 
 | Directive | `AppConfig` field |
 |-----------|-------------------|
-| `driver` / `dsn` | `imapsql_driver`, `imapsql_dsn` |
+| `driver` / `dsn` | `imapsql_driver`, `imapsql_dsn` — `sqlite3` (default) or `postgres` (libpq DSN; Madmail schema import supported) |
 | `default_quota` | `default_quota` (e.g. `1G`) |
 | `retention` | `retention` (e.g. `24h`) — hourly maildir purge when server runs; see [`21-scheduled-maintenance.md`](21-scheduled-maintenance.md) |
 | `unused_account_retention` | `unused_account_retention` (e.g. `720h`) — delete never-logged-in accounts |
@@ -105,6 +105,8 @@ Boot prefers `CHATMAIL_*_ADDR` env vars, then config listen addresses, then dev 
 | `www_dir` | External www root (`html-serve` override) | embedded assets |
 | `ss_addr` / `ss_password` / `ss_cipher` / `ss_cert` / `ss_key` / `ss_allowed_ports` | Shadowsocks proxy (see [`11-proxy-services.md`](11-proxy-services.md)) | — |
 
+Runtime SS config merges file directives with DB overrides (`__SS_ENABLED__`, `__SS_PORT__`, …) via `chatmail-shadowsocks::resolve_runtime`. Admin toggle `/admin/services/shadowsocks` requires `ss_addr` + `ss_password` in config.
+
 Madmail reference: [`context/madmail/dist/config/maddy.example.conf`](../../context/madmail/dist/config/maddy.example.conf) (`username_length`, `password_length`, `min_username_length`, `max_username_length`). madmail-v2 also supports `password_min_length` (cmrelay `chatmail.ini` parity).
 
 `username_length` is clamped to `[min_username_length, max_username_length]`. Generated passwords use `max(password_length, password_min_length)`.
@@ -148,19 +150,98 @@ Implementation: `chatmail-config::CredentialPolicy`, enforced in `chatmail-auth:
 
 ## Dynamic settings (database)
 
-Stored in the `settings` table with Madmail `__KEY__` names (see `chatmail-db::settings_keys`):
+Stored in the `settings` table (`key` / `value` TEXT). **Source of truth for key names:** `crates/chatmail-db/src/settings_keys.rs`. Madmail parity reference: [`context/madmail/docs/chatmail/settings_db.md`](../../context/madmail/docs/chatmail/settings_db.md) (partial — several Madmail keys are not implemented in madmail-v2; see gaps below).
 
-- `__REGISTRATION_OPEN__`, `__JIT_REGISTRATION_ENABLED__`
-- `__FEDERATION_POLICY__`, `__FEDERATION_ENABLED__`
-- `__MESSAGE_RETENTION_ENABLED__` — hourly maildir file purge (default off; admin settings bundle `message_retention_enabled`)
-- `__MESSAGE_RETENTION__` — purge duration when enabled (default `30d`; admin `message_retention`)
-- `__AUTO_PURGE_SEEN__` — auto-delete seen IMAP messages (default off; admin `/admin/services/auto_purge_seen`)
-- `__PUSH_MODE__` — `auto` | `on` | `off` (default **`off`**); controls runtime POSTs to `notifications.delta.chat` and IMAP `XDELTAPUSH` advertisement. Admin `/admin/services/push`, CLI `madmail push`, admin-web toggle — see [23-push-notifications.md](23-push-notifications.md)
-- `__PUSH_ENABLED__` — legacy `true`/`false` mirror of runtime enabled state (default **`false`**); kept in sync with `__PUSH_MODE__` for older admin builds
-- `__APPENDLIMIT__`, `__MAX_MESSAGE_SIZE__` — effective message size cap; CLI [`madmail message-size`](../guide/cli/message-size.md), admin settings bundle
-- Port and feature toggles (`__SMTP_PORT__`, `__SUBMISSION_PORT__`, `__IMAP_PORT__`, …) — admin API `/admin/settings/*` and CLI [`madmail port`](../guide/cli/port.md); www `dclogin` and `DcloginMailSettings::from_config_with_db` read these on every page render; SMTP/IMAP/HTTP bind addresses use the same overrides at process start (`effective_*_listen` in `chatmail-config`)
+Admin: `GET /admin/settings` (bulk) or `GET|POST /admin/settings/{name}` (`set` / `reset`). Service toggles use dedicated resources (`/admin/registration`, `/admin/services/turn`, …). Soft reload required for port/listener changes.
 
-`log off` (or omit `log`) is the default; use `log stderr` / `log syslog` in config to enable tracing. Restart required.
+### Toggle settings (`"true"` / `"false"`)
+
+| DB key | Default when unset | Admin resource / setting | Usage |
+|--------|---------------------|--------------------------|-------|
+| `__REGISTRATION_OPEN__` | `false` | `/admin/registration` | `POST /new` open/closed; CLI `madmail registration` |
+| `__JIT_REGISTRATION_ENABLED__` | `true` | `/admin/registration/jit` | First-login account create; falls back to registration open in `AuthCache` hydrate |
+| `__REGISTRATION_TOKEN_REQUIRED__` | `false` | `/admin/settings/registration_token_required` | Require token on `/new` |
+| `__TURN_ENABLED__` | `true` | `/admin/services/turn` | Embedded TURN + IMAP METADATA |
+| `__IROH_ENABLED__` | `true` | `/admin/services/iroh` | Embedded iroh-relay + IMAP metadata |
+| `__SS_ENABLED__` | `true` (only if SS configured in file) | `/admin/services/shadowsocks` | Raw TCP Shadowsocks relay |
+| `__SS_WS_ENABLED__` | — | `/admin/services/ss_ws` | **Not implemented** — always disabled |
+| `__SS_GRPC_ENABLED__` | — | `/admin/services/ss_grpc` | **Not implemented** — always disabled |
+| `__AUTO_PURGE_SEEN__` | `false` | `/admin/services/auto_purge_seen` | Delete maildir `cur/` every 15s |
+| `__MESSAGE_RETENTION_ENABLED__` | `false` | settings bundle `message_retention_enabled` | Hourly `prune-old-messages` |
+| `__HTTP_PROXY_ENABLED__` | — | `/admin/services/http_proxy` | **Not implemented** |
+| `__ADMIN_WEB_ENABLED__` | `false` | `/admin/services/admin_web` | Embedded admin SPA |
+| `__WEBIMAP_ENABLED__` | `false` | `/admin/services/webimap` | WebIMAP REST + WS |
+| `__WEBSMTP_ENABLED__` | `false` | `/admin/services/websmtp` | WebSMTP submit API |
+| `__PUSH_ENABLED__` | `false` | settings bundle `push_enabled` | Legacy mirror of push on/off |
+| `__FEDERATION_ENABLED__` | `false` | `/admin/settings/federation` | Outbound federation master toggle |
+
+**Push mode** (separate from boolean toggles): `__PUSH_MODE__` = `auto` \| `on` \| `off` (default **`off`**). Admin `/admin/services/push`, CLI `madmail push` — see [23-push-notifications.md](23-push-notifications.md).
+
+**Federation policy** (string, not bool): `__FEDERATION_POLICY__` = `ACCEPT` \| `REJECT`. Admin `/admin/settings/federation`.
+
+**Not in madmail-v2:** Madmail `__LOG_DISABLED__` / `/admin/services/log` — No-Log is static only (`log off` in `maddy.conf`; see [12-security.md](12-security.md)).
+
+### Port overrides (empty = use `maddy.conf` listen address)
+
+| DB key | Admin path | Service |
+|--------|------------|---------|
+| `__SMTP_PORT__` | `/admin/settings/smtp_port` | SMTP inbound |
+| `__SUBMISSION_PORT__` | `/admin/settings/submission_port` | Submission STARTTLS |
+| `__SUBMISSION_TLS_PORT__` | `/admin/settings/submission_tls_port` | Submission SMTPS |
+| `__IMAP_PORT__` | `/admin/settings/imap_port` | IMAP plain |
+| `__IMAP_TLS_PORT__` | `/admin/settings/imap_tls_port` | IMAPS |
+| `__TURN_PORT__` | `/admin/settings/turn_port` | TURN/STUN |
+| `__SASL_PORT__` | `/admin/settings/sasl_port` | SASL (Madmail: `__DOVECOT_PORT__`) |
+| `__IROH_PORT__` | `/admin/settings/iroh_port` | Iroh relay |
+| `__SS_PORT__` | `/admin/settings/ss_port` | Shadowsocks |
+| `__SS_WS_PORT__` | `/admin/settings/ss_ws_port` | Stored; transport disabled |
+| `__SS_GRPC_PORT__` | `/admin/settings/ss_grpc_port` | Stored; transport disabled |
+| `__HTTP_PORT__` | `/admin/settings/http_port` | HTTP plain |
+| `__HTTPS_PORT__` | `/admin/settings/https_port` | HTTPS |
+| `__HTTP_PROXY_PORT__` | `/admin/settings/http_proxy_port` | **Not implemented** |
+
+### Per-port access (`"true"` = bind localhost only)
+
+| DB key | Admin path |
+|--------|------------|
+| `__SMTP_LOCAL_ONLY__` | `/admin/settings/smtp_local_only` |
+| `__SUBMISSION_LOCAL_ONLY__` | `/admin/settings/submission_local_only` |
+| `__SUBMISSION_TLS_LOCAL_ONLY__` | `/admin/settings/submission_tls_local_only` |
+| `__IMAP_LOCAL_ONLY__` | `/admin/settings/imap_local_only` |
+| `__IMAP_TLS_LOCAL_ONLY__` | `/admin/settings/imap_tls_local_only` |
+| `__TURN_LOCAL_ONLY__` | `/admin/settings/turn_local_only` |
+| `__SASL_LOCAL_ONLY__` | `/admin/settings/sasl_local_only` |
+| `__IROH_LOCAL_ONLY__` | `/admin/settings/iroh_local_only` |
+| `__HTTP_LOCAL_ONLY__` | `/admin/settings/http_local_only` |
+| `__HTTPS_LOCAL_ONLY__` | `/admin/settings/https_local_only` |
+
+### Value settings (strings)
+
+| DB key | Admin path | Usage |
+|--------|------------|-------|
+| `__SMTP_HOSTNAME__` | `smtp_hostname` | EHLO / autoconfig |
+| `__TURN_REALM__` | `turn_realm` | TURN realm |
+| `__TURN_SECRET__` | `turn_secret` | TURN REST HMAC secret |
+| `__TURN_RELAY_IP__` | `turn_relay_ip` | Relay interface |
+| `__TURN_TTL__` | `turn_ttl` | Credential TTL (seconds) |
+| `__IROH_RELAY_URL__` | `iroh_relay_url` | IMAP `/shared/vendor/deltachat/irohrelay` |
+| `__SS_CIPHER__` | `ss_cipher` | Shadowsocks cipher |
+| `__SS_PASSWORD__` | `ss_password` | Shadowsocks password |
+| `__HTTP_PROXY_PATH__` | `http_proxy_path` | **Not implemented** |
+| `__HTTP_PROXY_USERNAME__` | `http_proxy_username` | **Not implemented** |
+| `__HTTP_PROXY_PASSWORD__` | `http_proxy_password` | **Not implemented** |
+| `__ADMIN_PATH__` | `admin_path` | JSON-RPC mount (default `/api/admin`) |
+| `__ADMIN_WEB_PATH__` | `admin_web_path` | Admin SPA mount (default `/admin`) |
+| `__DCLOGIN_IMAP_SECURITY__` | `dclogin_imap_security` | `ssl` / `starttls` / `plain` in dclogin URLs |
+| `__DCLOGIN_SMTP_SECURITY__` | `dclogin_smtp_security` | Same for SMTP hints |
+| `__LANGUAGE__` | `language` | www UI language (`en`, `fa`, `ru`, `es`) |
+| `__APPENDLIMIT__` | `appendlimit` | IMAP append cap (e.g. `100M`) |
+| `__MAX_MESSAGE_SIZE__` | `max_message_size` | SMTP cap; effective = min(appendlimit, max) |
+| `__MESSAGE_RETENTION__` | `message_retention` | Duration (`30d`, `720h`, …) when retention enabled |
+
+CLI: [`madmail port`](../guide/cli/port.md), [`madmail message-size`](../guide/cli/message-size.md). Ports and dclogin hints are read via `chatmail-config::effective_*` at listener bind and on www page render.
+
+`log off` (or omit `log`) is the default; use `log stderr` / `log syslog` in config to enable tracing. Restart required for static `log` directive.
 
 ## Database layout vs Madmail
 
@@ -180,7 +261,7 @@ Top-level directives:
 | `acme_email` | `acme_email` — ACME contact (default: `admin@<domain>` via `effective_acme_email`) |
 | `tls_mode autocert` | `tls_mode` — enables in-process daily renewal when server runs (see [`19-certificates.md`](19-certificates.md)) |
 
-madmail-v2 does not run maddy’s in-process `autocert` TLS loader on first connection. Use `madmail install` / `madmail certificate get` (lers HTTP-01) and `tls file` paths, or `tls_mode autocert` for scheduled renewal via `chatmail-tasks`.
+madmail-v2 does not run maddy’s in-process `autocert` TLS loader on first connection. Use `madmail install` / `madmail certificate get` (instant-acme HTTP-01) and `tls file` paths, or `tls_mode autocert` for scheduled renewal via `chatmail-tasks`.
 
 ## OpenMetrics
 

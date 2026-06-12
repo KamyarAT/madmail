@@ -46,7 +46,7 @@ Madmail-compatible JSON-RPC admin API. Full operator reference: [`context/madmai
 | `/admin/reload` | POST | **Soft reload** — stop SMTP/IMAP/HTTP, `AppState::hydrate`, rebind listeners from DB ports (admin-web “Apply & Restart”) |
 | `/admin/registration` | GET, POST | Implemented |
 | `/admin/registration/jit` | GET, POST | Implemented |
-| `/admin/services/turn` | GET, POST | `__TURN_ENABLED__`; POST triggers soft reload (embedded turn-rs + IMAP TURN metadata) |
+| `/admin/services/turn` | GET, POST | `__TURN_ENABLED__`; POST triggers soft reload (embedded webrtc-rs TURN + IMAP TURN metadata) |
 | `/admin/services/iroh` | GET, POST | `__IROH_ENABLED__` (default on when configured); POST triggers soft reload (embedded iroh-relay v0.35.0 + IMAP `/shared/vendor/deltachat/irohrelay`) |
 | `/admin/services/admin_web` | GET, POST | DB toggle only |
 | `/admin/services/auto_purge_seen` | GET, POST | Implemented (`__AUTO_PURGE_SEEN__`, default disabled) |
@@ -55,6 +55,7 @@ Madmail-compatible JSON-RPC admin API. Full operator reference: [`context/madmai
 | `/admin/services/push` | GET, POST | Implemented — `__PUSH_MODE__` (`auto`/`on`/`off`, **default `off`**); POSTs device tokens to `notifications.delta.chat` when enabled; GET returns `successful_notifications`, `consecutive_failures`; POST `enable`/`disable`/`auto` → soft reload. See [23-push-notifications.md](23-push-notifications.md) |
 | `/admin/settings/federation` | GET, POST | Implemented |
 | `/admin/federation/rules` | GET, POST, DELETE | Implemented |
+| `/admin/federation/silent-dismiss` | GET, POST, DELETE | Implemented — outbound domains accepted but not delivered (`federation_silent_dismiss` table) |
 | `/admin/federation/servers` | GET | Implemented (`FederationTracker`) |
 | `/admin/accounts` | GET, DELETE | Implemented |
 | `/admin/blocklist` | GET, POST, DELETE | Implemented |
@@ -65,12 +66,15 @@ Madmail-compatible JSON-RPC admin API. Full operator reference: [`context/madmai
 | `/admin/settings/*` | GET, POST | Implemented (ports, paths, language, security, …) |
 | `/admin/notice` | GET, POST | Implemented (unencrypted admin email to inbox) |
 | `/admin/queue` | POST | Implemented (maildir purge + `purge_queue` for outbound retry dir) |
-| `/admin/shares` | * | Not yet |
-| `/admin/services/shadowsocks` | GET, POST | Stub — always `disabled`; `enable` returns 400 (not implemented) |
-| `/admin/services/ss_ws` | GET, POST | Stub (same) |
-| `/admin/services/ss_grpc` | GET, POST | Stub (same) |
-| `/admin/services/http_proxy` | GET, POST | Stub (same) |
-| `/admin/settings/ss_*`, `http_proxy_*` | GET, POST | Stub — changes return 400 (not implemented) |
+| `/admin/shares` | * | Not yet (CLI `madmail sharing` + `sharing.db` implemented; see [17-data-models.md](17-data-models.md)) |
+| `/admin/services/shadowsocks` | GET, POST | **Implemented** when `ss_addr` + `ss_password` in `maddy.conf`; toggle via `__SS_ENABLED__`; 400 when SS not configured |
+| `/admin/services/ss_ws` | GET, POST | Always `disabled` — raw TCP only; `enable` returns 400 |
+| `/admin/services/ss_grpc` | GET, POST | Always `disabled` — raw TCP only; `enable` returns 400 |
+| `/admin/services/http_proxy` | GET, POST | Stub — not implemented |
+| `/admin/settings/ss_port`, `ss_cipher`, `ss_password`, … | GET, POST | Implemented when SS configured; `ss_ws_*` / `ss_grpc_*` settings stored but transports disabled |
+| `/admin/settings/http_proxy_*` | GET, POST | Stub — changes return 400 |
+| `/admin/message-size` | GET, PUT, DELETE | Implemented — effective cap (`appendlimit` ∧ `max_message_size`) |
+| `/admin/registration-token` | GET, POST, DELETE | Implemented — registration token CRUD |
 
 Toggle POST body: `{"action": "enable"}` or `{"action": "disable"}`.
 
@@ -139,8 +143,11 @@ Response shape: `{ "action", "message", "deleted"?: N }`.
 crates/chatmail-admin/
   src/handler.rs    # RPC dispatch, envelope (HTTP 200 + JSON status)
   src/auth.rs       # Bearer + rate limit
+  src/cors.rs       # CORS for admin API
   src/router.rs     # AdminState + axum POST /
-  src/resources/    # Per-resource handlers
+  src/resources/    # accounts, blocklist, dns, exchangers, federation, message_size,
+                    # notice, proxy, push, queue, quota, settings, status_storage,
+                    # toggles, tokens
 
 crates/chatmail/src/servers.rs
   build_admin_router() → nest under admin_path on HTTP listener
@@ -157,7 +164,11 @@ crates/chatmail-fed/src/server.rs
 | `p9_blocklist_post_get` | blocklist POST/GET |
 | `p9_auto_purge_seen_toggle` | `/admin/services/auto_purge_seen` enable/disable + settings sync |
 | `p9_status_message_counters` | Live atomic counters in `/admin/status` |
-| `p9_shadowsocks_always_disabled_with_enable_error` | Proxy service stubs |
+| `p9_shadowsocks_not_configured` | SS toggle returns 400 when not in `maddy.conf` |
+| `p9_shadowsocks_configured_toggle` | SS GET/POST toggle when `ss_addr` + `ss_password` set |
+| `p9_ss_ws_and_grpc_transports_disabled` | WS/gRPC SS transports always disabled |
+| `p9_federation_silent_dismiss_crud` | `/admin/federation/silent-dismiss` CRUD |
+| `admin_message_size_get_put_delete` | `/admin/message-size` effective cap |
 | `p9_auth_gate_bearer` | constant-time Bearer check |
 | `p9_notice_post_delivers` | POST `/admin/notice` → local maildir |
 | `p9_queue_purge_blobs_older` | POST `/admin/queue` `purge_blobs_older` |
@@ -194,6 +205,8 @@ Push UI: overview card + services row — toggle (`auto`/`disable`), successful-
 | `/admin/reload` | `madmail reload` | [reload.md](../guide/cli/reload.md) |
 | `/admin/registration` | `madmail registration` | [registration.md](../guide/cli/registration.md) |
 | `/admin/federation/rules` | `madmail federation` | [federation.md](../guide/cli/federation.md) |
+| `/admin/federation/silent-dismiss` | `madmail federation dismiss` | [federation.md](../guide/cli/federation.md) |
+| `/admin/registration-token` | `madmail registration-tokens` | [registration-tokens.md](../guide/cli/registration-tokens.md) |
 | `/admin/dns` | `madmail endpoint-cache` | [endpoint-cache.md](../guide/cli/endpoint-cache.md) |
 | `/admin/blocklist` | `madmail blocklist` | [blocklist.md](../guide/cli/blocklist.md) |
 | `/admin/accounts` | `madmail accounts` | [accounts.md](../guide/cli/accounts.md) |

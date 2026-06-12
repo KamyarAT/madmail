@@ -48,14 +48,15 @@ Accessed via:
 - `get_bool_setting(pool, "REGISTRATION_OPEN", true)`
 - `set_setting(...)`
 
-**Common keys** (see `settings_keys.rs`):
-- `REGISTRATION_OPEN`, `JIT_REGISTRATION_ENABLED`
-- `__LOG_DISABLED__` (No-Log)
-- `__TURN_ENABLED__`
-- `MESSAGE_SIZE_LIMIT`
-- `DEFAULT_QUOTA_BYTES`
-- Federation policy rows (separate tables but related)
-- Many admin toggles
+**Common keys** (full table: [`docs/TDD/13-configuration.md`](../TDD/13-configuration.md#dynamic-settings-database); source: `crates/chatmail-db/src/settings_keys.rs`):
+- `__REGISTRATION_OPEN__`, `__JIT_REGISTRATION_ENABLED__`
+- `__TURN_ENABLED__`, `__IROH_ENABLED__`, `__SS_ENABLED__`
+- `__PUSH_MODE__` (`auto` / `on` / `off`, default `off`)
+- `__APPENDLIMIT__`, `__MAX_MESSAGE_SIZE__` (effective message cap)
+- `__FEDERATION_POLICY__`, `__FEDERATION_ENABLED__`
+- Port overrides (`__SMTP_PORT__`, `__IMAP_TLS_PORT__`, …) and `__*_LOCAL_ONLY__` access flags
+
+**Not DB-backed:** No-Log uses static `log off` in `maddy.conf` (no `__LOG_DISABLED__` in madmail-v2). Default quota is `chatmail-config::DEFAULT_QUOTA_BYTES` / `default_quota` in file, not a settings row.
 
 These are read at hydration time and also on demand. Many have in-memory caches (`FederationPolicyCache`, etc.) that are invalidated on admin changes.
 

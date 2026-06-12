@@ -6,7 +6,15 @@ This document specifies how **madmail-v2** provides a **TURN/STUN relay** so Del
 
 - **Delta Chat core** (IMAP client + ICE JSON for UI)
 - **Madmail** (reference discovery + `pion/turn` server)
-- **turn-rs** (Rust TURN implementation to integrate or run alongside)
+- **webrtc-rs `turn`** (shipped in-process via `chatmail-turn`) — `context/turn-rs` remains a study reference
+
+### Shipped implementation (v2.8+)
+
+| Service | Crate | Stack |
+|---------|-------|-------|
+| TURN/STUN | `chatmail-turn` | In-process **webrtc-rs `turn` 0.11** (`runner.rs`); TURN REST HMAC credentials |
+| Iroh relay | `chatmail-iroh` | Supervised `iroh-relay` v0.35 child process |
+| Shadowsocks | `chatmail-shadowsocks` | Raw TCP relay (`server`, `runtime`, `urls`); optional Xray WS/gRPC paths exist but admin disables them |
 
 **TURN** (calls) is the main focus below. **Iroh relay** (WebXDC realtime) is documented in [§ Iroh relay](#iroh-relay-webxdc-realtime); implementation: `crates/chatmail-iroh`, [docs/plans/b6/P6-S07-metadata-iroh.md](../plans/b6/P6-S07-metadata-iroh.md).
 
@@ -226,15 +234,17 @@ key = MD5(username ":" realm ":" password)   // or SHA-256 per algorithm
 
 This is **wire-compatible** with Madmail’s metadata password + pion `GenerateAuthKey` for MD5.
 
-### Integration options for madmail-v2
+### Integration options (historical — shipped: webrtc-rs)
+
+**Shipped:** in-process **webrtc-rs `turn` 0.11** via `chatmail-turn::spawn_turn_server`. The turn-rs study path below was evaluated but not deployed.
 
 | Option | Pros | Cons |
 |--------|------|------|
-| **A. Crate dependency** (`turn-server` / path `context/turn-rs`) | Single binary, shared Tokio runtime | Version pinning, feature flags, API stability |
-| **B. Sidecar binary** | Isolation, reuse upstream releases | Two processes, shared config discipline |
-| **C. Reimplement minimal TURN** | Full control | High risk; avoid |
+| **A. webrtc-rs `turn` crate** (chosen) | Single binary, pion-compatible behaviour | Version pinning |
+| **B. turn-rs** (`context/turn-rs`) | Pure Rust | Datapath diverged from pion; not shipped |
+| **C. Sidecar binary** | Isolation | Two processes |
 
-**Recommendation:** **Option A or B** with **turn-rs** configured with:
+**turn-rs reference config** (study only):
 
 ```toml
 [auth]
@@ -249,15 +259,15 @@ port-range = "49152..65535"
 
 ### Gaps vs Madmail to close
 
-| Gap | Action |
+| Gap | Status |
 |-----|--------|
-| Metadata only on IMAP | Implement `GETMETADATA` in `chatmail-imap` (see [`03-imap-server.md`](03-imap-server.md)) |
-| Shared secret alignment | Single `turn_secret` in config → IMAP HMAC + turn-rs `static-auth-secret` |
-| `turn_enable` + admin toggle | DB `turn_enabled` + Madmail-compatible admin API |
-| Relay reachability | Firewall docs: TURN port UDP+TCP **and** relay UDP range |
+| `GETMETADATA` TURN line | **Done** — `chatmail-imap` + `TurnDiscovery` |
+| Shared secret alignment | **Done** — single `turn_secret` → IMAP HMAC + webrtc-rs TURN auth |
+| `turn_enable` + admin toggle | **Done** — `__TURN_ENABLED__` + `/admin/services/turn` |
+| Relay reachability | Document firewall: TURN port UDP+TCP **and** relay UDP range |
 | TCP relay | Phase 2 unless Desktop requires it (Madmail also limited) |
 | `turn_prefer_tls` / `turns` key | Phase 2: separate port in metadata or second key with `turns:` URLs |
-| WebRTC relay datapath on turn-rs | **Fixed:** real UDP bind per relay port + IP-based CreatePermission — see [20-deltachat-calls.md](20-deltachat-calls.md) |
+| WebRTC relay datapath | **Done** — webrtc-rs TURN with real UDP bind; see [20-deltachat-calls.md](20-deltachat-calls.md) |
 
 ---
 
@@ -269,8 +279,9 @@ port-range = "49152..65535"
 |-------|----------------|
 | `chatmail-imap` | `METADATA` capability; `GETMETADATA` for `/shared/vendor/deltachat/turn` (+ optional `turns`) |
 | `chatmail-config` | Parse `imap { turn_* }` and `turn udp://… tcp://… { }` from `maddy.conf` |
-| `chatmail-turn` (new) | Credential helper `turn_credential_line(server, port, secret, ttl) -> String`; optional embedded `turn-rs` runner |
-| `chatmail` binary | Start TURN listener when `turn { }` block present; graceful shutdown with IMAP/SMTP |
+| `chatmail-turn` | `TurnDiscovery`, `turn_metadata_line`, `spawn_turn_server` (webrtc-rs `turn`); `turn_allocate` client for tests |
+| `chatmail-shadowsocks` | `resolve_runtime` (file + DB merge), `spawn_shadowsocks_server`, `ShadowsocksUrls` |
+| `chatmail` binary | `turn_boot`, `iroh_boot`, `ss_boot` — start proxies when configured; graceful shutdown with IMAP/SMTP |
 
 ### Configuration (Madmail parity)
 
@@ -312,13 +323,14 @@ fn turn_metadata_value(server: &str, port: u16, secret: &str, ttl_secs: u64) -> 
 ### Process model
 
 ```
-chatmail (single process)
+madmail (single process; dev crate: chatmail)
 ├── chatmail-imap     ── GETMETADATA turn line
-├── chatmail-turn     ── turn-rs Service (UDP/TCP 3478)
+├── chatmail-turn     ── webrtc-rs TURN (UDP/TCP 3478)
+├── chatmail-shadowsocks ── optional raw TCP relay
 └── … smtp, http, fed
 ```
 
-Alternatively `chatmail-turn` spawns `turn-server` subprocess with generated `turn-server.toml` on SIGHUP/reload.
+`turn_boot` / `ss_boot` in `chatmail::supervisor` start embedded services; soft reload restarts them when toggles change.
 
 ### Security
 
@@ -326,11 +338,29 @@ Alternatively `chatmail-turn` spawns `turn-server` subprocess with generated `tu
 - Short-lived usernames (expiry in username) limit replay window.
 - No credential storage in DB—derived on each `GETMETADATA`.
 - Rate-limit `GETMETADATA` per session if abused (optional).
-- TURN allocation: restrict relay to public interface; consider max sessions per IP (turn-rs session tables).
+- TURN allocation: restrict relay to public interface; consider max sessions per IP.
 
 ### Admin API
 
-Extend `/admin/services/turn` (Madmail: GET/POST toggle) to reflect **running** relay count when turn-rs Prometheus/session API is wired (phase 2).
+`/admin/services/turn` GET/POST toggle is implemented. Session count in status is phase 2.
+
+---
+
+## Shadowsocks camouflage proxy
+
+**Crate:** `chatmail-shadowsocks` · **Boot:** `chatmail/src/ss_boot.rs`
+
+| Module | Role |
+|--------|------|
+| `runtime` | Merge `maddy.conf` (`ss_addr`, `ss_password`, …) with DB `__SS_*__` overrides |
+| `server` | `spawn_shadowsocks_server` — raw TCP relay with `allowed_ports` |
+| `urls` | `ShadowsocksUrls` — operator-facing SS URL generation |
+| `cipher` | Cipher negotiation |
+| `xray` | Optional WS/gRPC transports (code present; admin returns 400 on enable) |
+
+**Configuration:** `ss_addr` + `ss_password` in the `chatmail { }` block of `maddy.conf`; install flag `--enable-ss`. Runtime toggle via `/admin/services/shadowsocks` (`__SS_ENABLED__`). Settings `ss_port`, `ss_cipher`, `ss_password` work when SS is configured.
+
+**Not implemented:** HTTP proxy (`/admin/services/http_proxy`), SS WebSocket/gRPC transports (`ss_ws`, `ss_grpc`).
 
 ---
 
@@ -356,9 +386,9 @@ Full step-by-step plan: **[`docs/plans/b9/`](../plans/b9/README.md)**.
 
 ### Smoke ([RFC 8489](RFC/rfc8489.txt), [RFC 8656](RFC/rfc8656.txt))
 
-- STUN Binding against ephemeral turn-rs listener.
+- STUN Binding against ephemeral webrtc-rs TURN listener (`chatmail-turn` smoke tests).
 - TURN Allocate with username/password from `turn_metadata_value` (long-term creds per [RFC 8656](RFC/rfc8656.txt) §4).
-- Optional: `coturn` `turnutils_uclient` if `COTURN_UCLIENT_PATH` set (parity with [`context/turn-rs/tests/turn.rs`](../../context/turn-rs/tests/turn.rs)).
+- `chatmail-turn::turn_allocate` client helpers for integration tests.
 
 ### Integration + E2E (madmail-v2 + relay-ping patterns)
 
@@ -462,9 +492,10 @@ Madmail reference: [`context/madmail/internal/endpoint/imap/imap.go`](../../cont
 Unlike legacy Madmail/cmdeploy (separate `iroh-relay.service`), **madmail-v2** ships one operator binary:
 
 ```
-chatmail (one process)
+madmail (one process; dev crate: chatmail)
 ├── SMTP / IMAP / HTTP / Admin / …
-├── chatmail-turn     — turn-rs in-process (calls)
+├── chatmail-turn     — webrtc-rs TURN in-process (calls)
+├── chatmail-shadowsocks — raw TCP SS relay (optional)
 └── chatmail-iroh     — spawns embedded iroh-relay v0.35.0 child
         ↑ binary included at compile time (build.rs / assets/)
 ```

@@ -3,7 +3,7 @@
 Operator reference: [`context/madmail/docs/chatmail/certificate.md`](../../context/madmail/docs/chatmail/certificate.md).  
 Tutorials: [`only-chatmail-domain-setup-auto-cert.md`](../../context/madmail/docs/tutorials/only-chatmail-domain-setup-auto-cert.md), [`only-chatmail-domain-setup-no-auto-cert.md`](../../context/madmail/docs/tutorials/only-chatmail-domain-setup-no-auto-cert.md).
 
-Implementation: `crates/chatmail-acme/` ([lers](https://github.com/akrantz01/lers) for ACME HTTP-01), `crates/chatmail-tls/` (load PEM at runtime).
+Implementation: `crates/chatmail-acme/` ([instant-acme](https://github.com/DavidBuchanan314/instant-acme) for ACME HTTP-01 + custom `http01` solver), `crates/chatmail-tls/` (load PEM at runtime).
 
 **Operator guide:** [`../guide/cli/certificate.md`](../guide/cli/certificate.md) · [`certificate-autocert.md`](../guide/cli/certificate-autocert.md) · install: [`../guide/cli/install.md`](../guide/cli/install.md).
 
@@ -21,7 +21,7 @@ Let's Encrypt is obtained **out-of-band** via CLI (`madmail certificate get`) or
 
 | Mode | CLI | Behaviour |
 |------|-----|-----------|
-| `autocert` | `--tls-mode autocert --acme-email admin@domain` | HTTP-01 via lers (DNS name) → writes `certs/*.pem`, account key in `autocert/account.key.pem` |
+| `autocert` | `--tls-mode autocert --acme-email admin@domain` | HTTP-01 via instant-acme (DNS name) → writes `certs/*.pem`, account in `autocert/le-account.json` |
 | `autocert` (IP) | `--simple --ip PUBLIC_IP --auto-ip-cert --acme-email user@domain` | HTTP-01 via instant-acme, Let's Encrypt **shortlived** profile (~6-day IP cert) — see [`../install-simple-ip-acme.md`](../install-simple-ip-acme.md) |
 | `file` | `--tls-mode file --cert-path … --key-path …` | Use existing PEMs (certbot, Caddy, etc.) |
 | `self_signed` | `--tls-mode self_signed` or `--simple --ip` (without `--auto-ip-cert`) | rcgen self-signed in `certs/` (IP SANs via DNS names for bracket domains) |
@@ -38,7 +38,8 @@ Auto-detect (no `--tls-mode`):
 |------|---------|
 | `{state_dir}/certs/fullchain.pem` | Certificate chain (mode `640`) |
 | `{state_dir}/certs/privkey.pem` | Private key (mode `600`) |
-| `{state_dir}/autocert/account.key.pem` | ACME account key (lers renewals) |
+| `{state_dir}/autocert/le-account.json` | ACME account (instant-acme; used for renewals) |
+| `{state_dir}/autocert/account.key.pem` | Legacy account key path (still read if present) |
 
 ## CLI
 
@@ -130,6 +131,6 @@ TLS certificates and ACME issuance. Offline copies: [`RFC/README.md`](RFC/README
 | RFC | Topic | Local file |
 |-----|-------|------------|
 | [8446](https://datatracker.ietf.org/doc/html/rfc8446) | TLS 1.3 (server certificates) | [rfc8446.txt](RFC/rfc8446.txt) |
-| [8555](https://datatracker.ietf.org/doc/html/rfc8555) | ACME protocol (`chatmail-acme` / lers) | [rfc8555.txt](RFC/rfc8555.txt) |
+| [8555](https://datatracker.ietf.org/doc/html/rfc8555) | ACME protocol (`chatmail-acme` / instant-acme) | [rfc8555.txt](RFC/rfc8555.txt) |
 | [8314](https://datatracker.ietf.org/doc/html/rfc8314) | TLS for mail submission | [rfc8314.txt](RFC/rfc8314.txt) |
 | [9110](https://datatracker.ietf.org/doc/html/rfc9110) | HTTP-01 challenge (port 80) | [rfc9110.txt](RFC/rfc9110.txt) |

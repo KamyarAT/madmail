@@ -1,6 +1,8 @@
 # SMTP Server Implementation
 
-**Implementation:** `crates/chatmail-smtp` (`server`, `session`, `protocol`). PGP gate: `chatmail-pgp`. Auth/JIT: `chatmail-auth`. Local delivery and remote handoff: `chatmail-storage` + `chatmail-delivery`. Message size: `chatmail-state::MessageSizeLimit` + DB `__MAX_MESSAGE_SIZE__` / `__APPENDLIMIT__`. Wired from `chatmail::supervisor`.
+**Implementation:** `crates/chatmail-smtp` (`server`, `session`, `protocol`, `data_limit`). PGP gate: `chatmail-pgp` (MIME/header checks via `mail-parser`, not OpenPGP packet parsing). Auth/JIT: `chatmail-auth`. Local delivery and remote handoff: `chatmail-storage` + `chatmail-delivery`. Message size: `chatmail-state::MessageSizeLimit` + DB `__MAX_MESSAGE_SIZE__` / `__APPENDLIMIT__`. Wired from `chatmail::supervisor`.
+
+**Note:** madmail-v2 uses a **custom SMTP parser** (`protocol` + `data_limit::read_smtp_data_limited`), not `smtp-proto`. Stalwart/`smtp-proto` remain study references only.
 
 **Operator CLI:** [`../guide/cli/port.md`](../guide/cli/port.md) (SMTP/submission ports) · [`message-size.md`](../guide/cli/message-size.md).
 
@@ -54,15 +56,9 @@ crates/smtp/
 
 **Important:** Stalwart SMTP is wired to `common::Server`, `store`, `registry`, and `spam-filter`. You cannot drop in `crates/smtp` as a library without those dependencies. Treat it as a **design reference** for session structure and `smtp-proto` usage.
 
-### `smtp-proto` (recommended building block)
+### `smtp-proto` (study reference — not used)
 
-Used by Stalwart for:
-
-- `Request::{Ehlo, Mail, Rcpt, Data, Auth, Bdat, ...}`
-- `LineReceiver` / `DataReceiver` / `BdatReceiver` with size limits
-- Response encoding
-
-madmail-v2 should likely depend on **`smtp-proto`** (or equivalent) plus a thin **Chatmail session** layer (PGP, federation, storage).
+Stalwart uses `smtp-proto` for `Request::{Ehlo, Mail, Rcpt, Data, Auth, …}` and DATA receivers. **madmail-v2 ships a custom parser** in `chatmail-smtp::protocol` with size limits in `data_limit`. Do not assume `smtp-proto` is a workspace dependency.
 
 ---
 
@@ -115,7 +111,7 @@ Location: `context/madmail/internal/pgp_verify/`
 
 Single function: `EnforceEncryption(header, body, Options{From, ...})`
 
-Must implement deep OpenPGP packet inspection (New Format packets, PKESK/SKESK + SEIPD, partial body lengths, armor stripping). See `12-security.md` (when written) and Madmail tests.
+Madmail uses deep OpenPGP packet inspection. **madmail-v2** (`chatmail-pgp`) implements Madmail-compatible policy via `mail-parser` MIME/header checks: `application/pgp-encrypted`, PGP-MIME structure, Secure-Join bypass, bounce detection. See `12-security.md` and `chatmail-pgp` unit tests.
 
 ### Error codes (Chatmail-specific)
 
@@ -136,16 +132,14 @@ Must implement deep OpenPGP packet inspection (New Format packets, PKESK/SKESK +
 
 ---
 
-## madmail-v2 proposed crate split
-
-Mirror Stalwart’s separation, but keep Chatmail policy in your code:
+## madmail-v2 crate split (implemented)
 
 | Crate / module | Responsibility |
 |----------------|----------------|
-| `smtp-proto` (dependency) | Parse/serialize SMTP |
-| `chatmail-smtp` | Listeners, TLS, session, link to auth + storage + federation |
-| `chatmail-pgp` | `EnforceEncryption` (port from Madmail) |
+| `chatmail-smtp` | Custom `protocol` parser, `data_limit`, listeners, TLS, session |
+| `chatmail-pgp` | `enforce_encryption` — MIME/header policy gate |
 | `chatmail-delivery` | Local deliver + HTTP `/mxdeliv` + SMTP fallback outbound |
+| `chatmail-auth` | JIT + credential verify on AUTH |
 
 ### Minimum SMTP command set (MVP)
 

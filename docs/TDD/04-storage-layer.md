@@ -83,19 +83,23 @@ All frequently accessed data is loaded into memory at startup and kept consisten
 
 | Component              | Structure                          | Update Strategy          | Flush to DB          | Notes |
 |------------------------|------------------------------------|--------------------------|----------------------|-------|
-| **Users / Credentials**| `HashMap<String, User>`            | Write-through            | On create/delete     | Full user table in RAM |
-| **Quotas**             | `QuotaCache` (RwLock<HashMap>)     | Write-through            | Periodic + on change | Already designed |
-| **Federation Rules**   | `RwLock<HashSet<String>>`          | Write-through            | On add/remove        | O(1) checks |
-| **Endpoint Cache**     | `RwLock<HashMap>`                  | Write-through            | On change            | Delivery routing |
-| **FederationTracker**  | `RwLock<HashMap<Domain, Stats>>`   | In-memory increments     | Every 30s            | High-frequency updates |
-| **Message Counters**   | Atomic counters + struct           | In-memory                | Every 30s            | `sent`, `received`, etc. |
-| **Settings**           | `RwLock<HashMap<String, String>>`  | Write-through            | On change            | Dynamic config |
+| **Credentials**        | `AuthCache` (`username → hash`)    | Write-through            | On create/delete     | Blocklist set + JIT flag; not full user objects |
+| **JIT coalescing**     | `jit_flights` (`DashMap`)          | Per-login mutex          | —                    | Concurrent JIT logins coalesce on one DB create |
+| **Quotas**             | `QuotaCache` (`Arc`)               | Write-through            | Periodic + on change | Hot-path quota checks |
+| **Federation policy**  | `FederationPolicyCache`            | Write-through            | On add/remove        | Global ACCEPT/REJECT + per-domain rules |
+| **Silent dismiss**     | `FederationSilentDismissCache`     | Write-through            | On add/remove        | Outbound domains accepted but not delivered |
+| **Endpoint overrides** | DB (`chatmail-db::endpoint_cache`) | Read on outbound route   | On admin change      | Not a full in-memory hot cache |
+| **FederationTracker**  | `Arc<FederationTracker>`           | In-memory increments     | Every 30s            | High-frequency updates |
+| **Message Counters**   | Atomic counters + struct           | In-memory                | Every 30s            | `sent`, `received`, push stats, etc. |
+| **INBOX modseq**       | `EventBus` + `mailbox_modseq` DB   | In-memory + periodic     | Every 30s (`flusher`) | Monotonic change-ids for future CONDSTORE |
+| **Settings**           | DB source of truth                 | Per-request / hydrate    | On admin change      | Hot paths use `AppState` fields, not full settings RAM |
 
-### Loading Strategy at Startup
-1. Load **all users** into memory (credentials + basic profile).
-2. Load **all quotas** and compute current usage from filesystem or cached values.
-3. Load **federation rules**, **endpoint overrides**, and **settings**.
+### Loading Strategy at Startup (`AppState::hydrate`)
+1. Load **credentials + blocklist + JIT flag** into `AuthCache`.
+2. Load **quotas** and compute current usage from filesystem or cached values.
+3. Load **federation policy**, **silent dismiss**, and **mailbox modseq** seeds.
 4. Warm up `FederationTracker` from last flushed DB state.
+5. Construct `MailboxStore` with `StoragePolicy` from config (`mail_fsync`, `blob_dedup`).
 
 ### Update & Sync Strategy
 
@@ -144,7 +148,7 @@ The SQL database (SQLite or PostgreSQL) is used for:
 
 ## Implementation Notes (Rust)
 
-- Use `dashmap` for high-concurrency user/metric maps.
+- Use `dashmap` for `jit_flights` (concurrent JIT login coalescing).
 - Consider `notify` crate or inotify for filesystem-based quota if needed.
 - Implement a `PersistenceManager` actor/task that handles periodic flushing.
 - On startup, have a clear "hydration" phase with progress logging.

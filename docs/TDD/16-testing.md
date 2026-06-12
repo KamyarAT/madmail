@@ -18,7 +18,7 @@ Chatmail's correctness is defined by **real Delta Chat client behavior**, not ju
 ## 1. Unit Tests
 - `cargo test`
 - Focus on pure logic:
-  - PGP packet verification (many edge cases)
+  - PGP MIME/header policy (`chatmail-pgp::enforce_encryption` — Secure-Join, bounces, PGP-MIME)
   - Quota cache concurrency safety
   - Federation policy evaluation + normalization (IP brackets, case)
   - Endpoint cache resolution
@@ -73,7 +73,7 @@ Replicate and extend the existing Python test suite (`tests/deltachat-test/`).
 15. Iroh discovery + WebXDC realtime
 16. Admin API (all major endpoints)
 17. Quota enforcement
-18. **TURN** — IMAP `GETMETADATA /shared/vendor/deltachat/turn`, credentials work on local turn-rs, Core `ice_servers()` without fallback ([`plans/b9/`](../plans/b9/README.md))
+18. **TURN** — IMAP `GETMETADATA /shared/vendor/deltachat/turn`, credentials work on local webrtc-rs TURN (`chatmail-turn`), Core `ice_servers()` without fallback ([`plans/b9/`](../plans/b9/README.md))
 
 **Test Infrastructure**:
 - Python + `uv` + `deltachat-rpc-server`

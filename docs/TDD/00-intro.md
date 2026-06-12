@@ -36,8 +36,7 @@ The goal of this Rust rewrite is to provide:
 
 ## Non-Goals (Phase 1)
 - Full Dovecot compatibility / SASL proxying (future)
-- PostgreSQL as primary backend (SQLite first, Postgres later)
-- Web admin dashboard (Svelte) — can be reused or reimplemented in Leptos/Yew
+- Web admin dashboard rewrite (embedded Madmail Svelte SPA ships via `chatmail-admin-web`)
 
 ## Target Users
 - Operators running Chatmail instances (especially in restricted networks)
@@ -69,7 +68,8 @@ This TDD is organized into numbered sections:
 - `13-configuration.md` — `maddy.conf` + settings database (Madmail-compatible)
 - `14-cli-tools.md` — Command-line interface
 - `16-testing.md` — Unit + E2E testing strategy (`tests/` workspace + crate tests)
-- `17-data-models.md` — SQLite schema (Madmail `internal/db` alignment)
+- `17-data-models.md` — SQL schema (SQLite + Postgres; Madmail `internal/db` alignment)
+- `23-push-notifications.md` — XDELTAPUSH + `notifications.delta.chat`
 - `19-certificates.md` — TLS and ACME (`chatmail-acme`, `chatmail-tls`)
 - `20-deltachat-calls.md` — ICE/TURN test matrix
 - `21-scheduled-maintenance.md` — `chatmail-tasks` scheduler

@@ -15,7 +15,7 @@ The repository is a Cargo workspace (`Cargo.toml` at repo root). The shipped bin
     chatmail-fed    chatmail-imap   chatmail-smtp
     chatmail-www    chatmail-admin  chatmail-admin-web
     chatmail-turn   chatmail-iroh   chatmail-shadowsocks
-    chatmail-metrics
+    chatmail-push   chatmail-metrics
            │               │               │
            └───────────────┼───────────────┘
                            ▼
@@ -23,7 +23,7 @@ The repository is a Cargo workspace (`Cargo.toml` at repo root). The shipped bin
               chatmail-storage ◄── chatmail-auth
                            │
                            ▼
-              chatmail-state (AppState, caches, flusher)
+              chatmail-state (AppState, caches, flusher, push)
                            │
                            ▼
               chatmail-db ◄── chatmail-config
@@ -40,29 +40,29 @@ Integration tests live in workspace member `tests/` (`chatmail-integration` pack
 
 | Crate | Role | Key modules / entry points |
 |-------|------|------------------------------|
-| **`chatmail`** | Process entry: `main` → `boot::run` or `ctl::dispatch` | `boot`, `supervisor`, `servers`, `ctl/*`, `turn_boot`, `iroh_boot`, `ss_boot` |
+| **`chatmail`** | Process entry: `main` → `boot::run` or `ctl::dispatch` | `admin`, `boot`, `supervisor`, `servers`, `ctl/*`, `logging`, `push_boot`, `turn_boot`, `iroh_boot`, `ss_boot`, `upgrade`; optional `profiling` (`pprof` feature) |
 | **`chatmail-types`** | Shared errors and domain helpers | `error`, `domains` |
-| **`chatmail-config`** | `maddy.conf` AST, `AppConfig`, CLI (`clap`) | `maddy`, `madmail_parse`, `parse`, `cli`, `install_cli`, `credential_policy`, `queue`, `data_size`, `client_mail`, `autoconfig`, `paths`, `db_path` |
-| **`chatmail-db`** | SQLx pool, migrations, settings, accounts | `pool`, `settings`, `passwords`, `blocklist`, `endpoint_cache`, `federation_policy`, `message_stats`, `message_retention`, `maintenance`, `mail_ports`, `modseq`, `inbound`, `sharing` |
-| **`chatmail-state`** | In-memory hot path hydrated at boot | `AppState`, `auth`, `quota`, `policy`, `tracker`, `flusher`, `events`, `message_size`, `silent_dismiss`, `listener_ports`, `reload`, `mailbox_store` (with `StoragePolicy`) |
+| **`chatmail-config`** | `maddy.conf` AST, `AppConfig`, CLI (`clap`) | `maddy`, `madmail_parse`, `parse`, `cli`, `install_cli`, `config_autocert`, `config_www`, `credential_policy`, `queue`, `data_size`, `client_mail`, `autoconfig`, `paths`, `db_path` |
+| **`chatmail-db`** | SQLx pool (SQLite + Postgres), migrations, settings, accounts | `pool`, `settings`, `settings_keys`, `passwords`, `blocklist`, `endpoint_cache`, `federation_policy`, `message_stats`, `message_retention`, `maintenance`, `mail_ports`, `modseq`, `inbound`, `sharing`, `registration_tokens`, `account_info`, `schema`, `models`, `quota_defaults` |
+| **`chatmail-state`** | In-memory hot path hydrated at boot | `AppState` (`mailbox_store`, `push`, `jit_flights`), `auth`, `quota`, `policy`, `tracker`, `flusher`, `events`, `message_size`, `silent_dismiss`, `listener_ports`, `reload` (`ReloadScope::{Full,HttpRoutes}`) |
 | **`chatmail-storage`** | Maildir + CAS blobs on disk | `maildir`, `blob`, `cas`, `external_store`, `storage_policy`, `uidlist`, `maildir_cache`, `fsync_batch`, `delivery_batch`, `maildir_message`, `purge`, `inbox` |
-| **`chatmail-auth`** | Login, JIT, password hashing | `jit`, `hash`, `validate` |
-| **`chatmail-pgp`** | PGP-only policy gate | `enforce_encryption` (SMTP DATA, APPEND, `/mxdeliv`) |
-| **`chatmail-smtp`** | Async SMTP listener + sessions | `server`, `session`, `protocol` |
+| **`chatmail-auth`** | Login, JIT, password hashing | `jit`, `hash`, `validate`, `normalize` |
+| **`chatmail-pgp`** | PGP-only policy gate (MIME/header checks via `mail-parser`) | `enforce_encryption`, `EnforceOptions` |
+| **`chatmail-smtp`** | Custom async SMTP listener + sessions | `server`, `session`, `protocol`, `data_limit` |
 | **`chatmail-imap`** | Async IMAP listener + IDLE | `server`, `session`, `connection_stats` |
-| **`chatmail-fed`** | HTTP listener: `/mxdeliv` + merged routers | `mxdeliv`, `server::run_http_listener` |
-| **`chatmail-delivery`** | Outbound queue (HTTP then SMTP) | `queue`, `router`, `transport`, `federation_http` (shared `reqwest` client) |
-| **`chatmail-push`** | XDELTAPUSH device tokens + `notifications.delta.chat` notifier | `notifier`, `store`, `mode`, `stats` — [23-push-notifications.md](23-push-notifications.md) |
-| **`chatmail-www`** | Public site, `/new`, WebIMAP/WebSMTP | `router`, `webimap`, `webimap_ws`, `handlers` |
-| **`chatmail-admin`** | Admin JSON-RPC (`POST /api/admin`) | `resources::*`, `router` |
+| **`chatmail-fed`** | HTTP listener: `/mxdeliv` + merged routers | `mxdeliv`, `security`, `server::run_http_listener` |
+| **`chatmail-delivery`** | Outbound queue (HTTP then SMTP) | `queue`, `router`, `transport`; private `federation_http` (shared `reqwest` client) |
+| **`chatmail-push`** | XDELTAPUSH device tokens + `notifications.delta.chat` notifier | `enabled`, `notifier`, `store`, `mode`, `stats` — [23-push-notifications.md](23-push-notifications.md) |
+| **`chatmail-www`** | Public site, `/new`, WebIMAP/WebSMTP | `router`, `webimap`, `webimap_ws`, `handlers`, `gate`, `export`, `assets`, `context_cache`, `template`, `response` |
+| **`chatmail-admin`** | Admin JSON-RPC (`POST /api/admin`) | `auth`, `cors`, `handler`, `router`, `resources/*` |
 | **`chatmail-admin-web`** | Embedded operator SPA | `serve::admin_web_router` |
 | **`chatmail-tls`** | Load PEM → `rustls::ServerConfig` | `load_server_config` |
-| **`chatmail-acme`** | Let's Encrypt HTTP-01 / IP certs, self-signed | `obtain`, `obtain_ip`, `self_signed` |
-| **`chatmail-turn`** | In-process TURN/STUN (`webrtc-rs`) | `runner`, `credentials`, `turn_allocate` |
-| **`chatmail-iroh`** | Supervise embedded `iroh-relay` | `runner`, `discovery` |
-| **`chatmail-shadowsocks`** | Optional camouflage proxy | `server`, `allowed_ports` |
-| **`chatmail-tasks`** | Scheduled maintenance + autocert renewal | `scheduler`, `jobs`, `config`, `cert_renew` |
-| **`chatmail-metrics`** | Prometheus OpenMetrics exporter | `metrics`, `server` |
+| **`chatmail-acme`** | Let's Encrypt via **instant-acme** + self-signed | `obtain`, `obtain_ip`, `self_signed`, `http01`, `status`, `acme_common`; helpers `is_valid_dns_domain`, `is_valid_ip_for_acme`, `read_certificate_info` |
+| **`chatmail-turn`** | In-process TURN/STUN (**webrtc-rs `turn` 0.11**) | `runner`, `credentials`, `parse`, `turn_client`, `allocate_client` (`turn_allocate`, `TurnDiscovery`) |
+| **`chatmail-iroh`** | Supervise embedded `iroh-relay` v0.35 | `runner`, `discovery` (`IrohDiscovery`) |
+| **`chatmail-shadowsocks`** | Optional camouflage proxy | `server`, `runtime`, `cipher`, `urls`, `xray`, `allowed_ports` (`resolve_runtime`, `ShadowsocksUrls`) |
+| **`chatmail-tasks`** | Scheduled maintenance + autocert renewal | `scheduler`, `jobs`, `config`, `cert_renew` (`CertificateRenewer` trait) |
+| **`chatmail-metrics`** | Prometheus OpenMetrics exporter | `metrics`, `server` (SMTP counters, queue gauge) |
 
 ### Runtime wiring
 
@@ -73,11 +73,12 @@ Integration tests live in workspace member `tests/` (`chatmail-integration` pack
 3. **SMTP / submission** (`chatmail-smtp`) — port 25 + configured submission listeners.
 4. **IMAP** (`chatmail-imap`) — plain/TLS; METADATA for TURN/Iroh discovery and `XDELTAPUSH` device tokens.
 5. **Outbound** (`chatmail-delivery::start_outbound_queue`) — persistent queue + transport.
-6. **Proxies** — `turn_boot`, `iroh_boot`, `ss_boot` when enabled in settings/CLI.
-7. **Maintenance** (`chatmail-tasks::spawn_maintenance_scheduler`) — retention, dormant accounts, auto-purge seen, daily autocert renewal when `tls_mode = autocert`.
-8. **Metrics** (`chatmail-metrics`) — optional OpenMetrics listener.
+6. **Push** (`push_boot`) — XDELTAPUSH notifier when `__PUSH_MODE__` is not `off`.
+7. **Proxies** — `turn_boot`, `iroh_boot`, `ss_boot` when enabled in settings/CLI.
+8. **Maintenance** (`chatmail-tasks::spawn_maintenance_scheduler`) — retention, dormant accounts, auto-purge seen, daily autocert renewal when `tls_mode = autocert`.
+9. **Metrics** (`chatmail-metrics`) — optional OpenMetrics listener.
 
-Reload: admin `POST /admin/reload` or signal path recreates listeners with updated ports/TLS from DB + config (`supervisor.rs`).
+Reload: admin `POST /admin/reload` or signal path. `ReloadScope::HttpRoutes` rebinds HTTP only; `ReloadScope::Full` stops SMTP/IMAP/HTTP, re-hydrates `AppState`, and recreates listeners with updated ports/TLS from DB + config (`supervisor.rs`).
 
 ### TDD section → crate map
 
@@ -130,24 +131,27 @@ Normative protocol specs used across these crates are archived under [`RFC/`](RF
 │   └── Background Persistence Manager                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  Integrated proxy services (same deployment unit)              │
-│   ├── TURN server (`chatmail-turn` / turn-rs in-process)       │
+│   ├── TURN server (`chatmail-turn` / webrtc-rs in-process)     │
 │   └── Iroh relay (`chatmail-iroh` supervises iroh-relay v0.35) │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Technology Stack (Recommended)
+## Technology Stack (implemented)
 
 | Layer              | Technology                          | Rationale |
 |--------------------|-------------------------------------|---------|
 | Async Runtime      | Tokio + tracing                     | Widely used in Rust servers |
 | HTTP + WebSocket   | Axum + tower                        | WebSocket support; familiar Rust HTTP stack |
 | TLS                | rustls + tokio-rustls               | Memory safe, modern |
-| Database           | SQLx (compile-time checked) or Diesel | Async friendly |
-| SMTP Server        | Study `context/stalwart/crates/smtp` + `smtp-proto`; implement Chatmail-specific inbound/submission | Stalwart is full MTA; madmail-v2 needs PGP + federation + JIT |
-| IMAP Server        | Study `context/stalwart/crates/{imap,imap-proto}`; custom backend on mail storage | Protocol split in Stalwart matches recommended design |
-| Config             | `config` + hot-reload via DB        | Dynamic settings |
-| CLI                | `clap` + `dialoguer`                | Interactive install |
-| Admin Web (future) | Leptos or reuse Madmail Svelte      | Optional |
+| Database           | SQLx (SQLite default; Postgres supported) | Async friendly; Madmail schema import |
+| SMTP Server        | Custom `chatmail-smtp` (`protocol`, `data_limit`) | Chatmail PGP + federation + JIT; Stalwart studied for session shape |
+| IMAP Server        | Custom `chatmail-imap` on `chatmail-storage` | IDLE, METADATA, XDELTAPUSH |
+| PGP policy         | `mail-parser` MIME/header checks (`chatmail-pgp`) | Madmail parity without OpenPGP packet parser |
+| ACME               | instant-acme + custom HTTP-01 solver (`chatmail-acme`) | DNS + IP short-lived certs |
+| TURN               | webrtc-rs `turn` 0.11 in-process (`chatmail-turn`) | TURN REST HMAC credentials |
+| Config             | `maddy.conf` + DB settings + soft reload | Dynamic settings |
+| CLI                | `clap` (`madmail` binary, `chatmail` crate) | Interactive install |
+| Admin Web          | Embedded Madmail Svelte SPA (`chatmail-admin-web`) | Same-origin with `/api/admin` |
 
 ## Core Data Flow
 
@@ -185,11 +189,13 @@ All go through single `POST /api/admin` JSON-RPC endpoint with Bearer token.
 
 ## Key In-Memory Hot Paths (Performance Critical)
 
-- **Federation Rules** (`sync::RwLock<HashSet<String>>`) — checked on every inbound/outbound message
-- **QuotaCache** (`sync::RwLock<HashMap<String, QuotaEntry>>`)
-- **EndpointCache** (for delivery routing)
+- **FederationPolicyCache** (`Arc<FederationPolicyCache>`) — global ACCEPT/REJECT + per-domain rules
+- **FederationSilentDismissCache** — outbound domains accepted but not delivered
+- **QuotaCache** (`Arc<QuotaCache>`)
+- **AuthCache** — credentials + blocklist + JIT flag (not full user objects)
 - **FederationTracker** (per-domain stats, updated on every delivery attempt)
-- **Settings** (cached in memory, invalidated on change)
+- **Endpoint overrides** — DB-backed (`chatmail-db::endpoint_cache`); read on outbound routing
+- **Settings** — DB source of truth; hot paths read via `AppState` fields or per-request DB fetch
 
 All modifications are **write-through** (DB + RAM) under lock.
 
