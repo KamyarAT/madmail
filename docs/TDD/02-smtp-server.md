@@ -1,6 +1,8 @@
 # SMTP Server Implementation
 
-**Implementation:** `crates/chatmail-smtp` (`server`, `session`, `protocol`). PGP gate: `chatmail-pgp`. Auth/JIT: `chatmail-auth`. Local delivery and remote handoff: `chatmail-storage` + `chatmail-delivery`. Wired from `chatmail::supervisor`.
+**Implementation:** `crates/chatmail-smtp` (`server`, `session`, `protocol`). PGP gate: `chatmail-pgp`. Auth/JIT: `chatmail-auth`. Local delivery and remote handoff: `chatmail-storage` + `chatmail-delivery`. Message size: `chatmail-state::MessageSizeLimit` + DB `__MAX_MESSAGE_SIZE__` / `__APPENDLIMIT__`. Wired from `chatmail::supervisor`.
+
+**Operator CLI:** [`../guide/cli/port.md`](../guide/cli/port.md) (SMTP/submission ports) · [`message-size.md`](../guide/cli/message-size.md).
 
 ## Responsibilities
 

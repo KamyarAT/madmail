@@ -2,6 +2,8 @@
 
 **Implementation:** `crates/chatmail-imap` (`server`, `session`, `connection_stats`). Mailbox backend: `chatmail-storage`. Hot limits and federation side effects: `chatmail-state`. Wired from `chatmail::supervisor`.
 
+**Operator CLI:** [`../guide/cli/port.md`](../guide/cli/port.md) (IMAP ports) · [`push.md`](../guide/cli/push.md) (`XDELTAPUSH`).
+
 This section documents **IMAP commands and extensions** as implemented in the reference codebases under `context/`, for use when designing **chatmail-rs**. It covers three layers:
 
 | Layer | Path | Role |
@@ -425,6 +427,19 @@ From `imap-proto/src/parser/mod.rs` + `imap/src/op/mod.rs`:
 ---
 
 ## Rust implementation notes (`chatmail-rs`)
+
+### `crates/chatmail-storage` — mailbox backend
+
+IMAP sessions use `AppState::mailbox_store` (`MailboxStore`):
+
+| Concern | Implementation |
+|---------|----------------|
+| Stable UIDs | `uidlist::UidListStore` — `chatmail-uidlist` file; UIDs never reused on delete |
+| Listing | `maildir_cache::MaildirListCache` — skip `readdir` when directory mtimes unchanged |
+| APPEND / delivery | `blob` + optional `cas` hardlink fan-out; `mail_fsync` / `blob_dedup` from config |
+| IDLE EXISTS | `list_mailbox_messages` after delivery; unsolicited updates in `session.rs` |
+
+See [`04-storage-layer.md`](04-storage-layer.md) for `StoragePolicy` and on-disk layout.
 
 ### `crates/chatmail-imap` — IDLE (implemented)
 

@@ -15,6 +15,17 @@ Madmail GORM models: [`context/madmail/internal/db/models.go`](../../context/mad
 
 Compatible with Madmail `settings_table` / credentials DB KV.
 
+Notable chatmail-rs keys (full list: `chatmail-db::settings_keys`):
+
+| Key | CLI / admin | Notes |
+|-----|-------------|-------|
+| `__MESSAGE_RETENTION_ENABLED__` | admin settings | Hourly maildir purge toggle |
+| `__MESSAGE_RETENTION__` | admin settings | Duration (`30d`, `720h`, …) |
+| `__APPENDLIMIT__` / `__MAX_MESSAGE_SIZE__` | [`message-size`](../guide/cli/message-size.md) | Effective cap (min of both) |
+| `__PUSH_MODE__` | [`push`](../guide/cli/push.md) | `auto` / `on` / `off` |
+| `__WEBIMAP_ENABLED__` / `__WEBSMTP_ENABLED__` | [`webimap`](../guide/cli/webimap.md) | HTTP mail APIs |
+| `__SMTP_PORT__`, … | [`port`](../guide/cli/port.md) | Listener overrides |
+
 ## `passwords` (dual schema)
 
 **chatmail-rs native:**
@@ -95,10 +106,10 @@ Per-domain counters flushed from `FederationTracker` every 30s. Columns match Ma
 
 | Column | Type |
 |--------|------|
-| `name` | TEXT PK | `sent_messages`, `outbound_messages`, `received_messages` |
-| `count` | INTEGER | Flushed from `chatmail-db::message_stats` atomics every 30s |
+| `name` | TEXT PK | `sent_messages`, `outbound_messages`, `received_messages`, `push_successful_notifications` |
+| `count` | INTEGER | Flushed from in-memory atomics every 30s |
 
-Runtime increments: SMTP DATA (`record_smtp_accepted`), `/mxdeliv` + WebSMTP (`record_inbound_delivery`), remote queue success (`increment_outbound`). See Madmail `msgcounter.go`.
+Runtime increments: SMTP DATA (`record_smtp_accepted`), `/mxdeliv` + WebSMTP (`record_inbound_delivery`), remote queue success (`increment_outbound`), push notify 2xx (`chatmail-push::stats`). See Madmail `msgcounter.go`.
 
 ## `exchangers`
 
@@ -133,7 +144,18 @@ PK (`username`, `device_token`). Populated via IMAP `SETMETADATA /private/device
 
 ## Mail storage (filesystem)
 
-Under `{state_dir}/mail/{user}/Maildir/{cur,new,tmp}/` — same layout as Madmail external store / Dovecot maildir path (see `04-storage-layer.md`).
+Under `{state_dir}/`:
+
+| Path | Purpose |
+|------|---------|
+| `mail/{user}/Maildir/{cur,new,tmp}/` | Per-user maildir (Madmail external store / Dovecot parity) |
+| `mail/{user}/Maildir/chatmail-uidlist` | Persistent IMAP UID index (`chatmail-storage::uidlist`) |
+| `mail/{user}/folders/…` | Additional IMAP mailboxes (e.g. `DeltaChat`) |
+| `blobs/{hh}/{sha256}` | Content-addressed dedup store when `blob_dedup on` |
+| `remote_queue/` | Outbound federation retry queue (`chatmail-delivery`) |
+| `pending_notifications/` | Disk-backed push notify jobs (`chatmail-push`) |
+
+Full module map: [`04-storage-layer.md`](04-storage-layer.md).
 
 ## Implementation references
 
@@ -142,7 +164,13 @@ Under `{state_dir}/mail/{user}/Maildir/{cur,new,tmp}/` — same layout as Madmai
 | Migrations | `crates/chatmail-db/migrations/` |
 | Passwords dual-read | `crates/chatmail-db/src/passwords.rs` |
 | Settings keys | `crates/chatmail-db/src/settings_keys.rs` |
+| Message retention (DB) | `crates/chatmail-db/src/message_retention.rs` — `__MESSAGE_RETENTION_*__` |
+| Port overrides | `crates/chatmail-db/src/mail_ports.rs` |
+| Dormant accounts | `crates/chatmail-db/src/maintenance.rs` |
+| Federation inbound checks | `crates/chatmail-db/src/inbound.rs` |
+| IMAP MODSEQ persistence | `crates/chatmail-db/src/modseq.rs` |
 | Quota / policy RAM | `crates/chatmail-state/` |
+| CLI operators | [`../guide/cli/README.md`](../guide/cli/README.md) |
 
 ## Related RFCs
 

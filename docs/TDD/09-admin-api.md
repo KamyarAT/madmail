@@ -2,6 +2,8 @@
 
 Madmail-compatible JSON-RPC admin API. Full operator reference: [`context/madmail/docs/chatmail/admin_api.md`](../../context/madmail/docs/chatmail/admin_api.md). Implementation: `crates/chatmail-admin/`, wired from `chatmail-fed` HTTP listener.
 
+**CLI equivalents:** many admin resources have `madmail` subcommands — see [`../guide/cli/README.md`](../guide/cli/README.md) and the mapping table below. TDD parity: [14-cli-tools.md](14-cli-tools.md).
+
 ## Design goals
 
 1. **Single endpoint** — `POST {admin_path}` (default `/api/admin`)
@@ -184,6 +186,27 @@ Mounted on the HTTP listener together with `/mxdeliv` and `/api/admin` (see `cra
 Madmail serves a separate SPA from `admin-web/` via `adminweb.go`. chatmail-rs embeds **`external/madmail-admin-web`** via `chatmail-admin-web` on the HTTP listener (same origin as `/api/admin`).
 
 Push UI: overview card + services row — toggle (`auto`/`disable`), successful-notification count, `notifications.delta.chat` copy. See [23-push-notifications.md](23-push-notifications.md#admin-web-embedded-spa).
+
+## Admin API ↔ CLI mapping
+
+| Admin resource / setting | CLI command | Guide |
+|--------------------------|-------------|-------|
+| `/admin/reload` | `madmail reload` | [reload.md](../guide/cli/reload.md) |
+| `/admin/registration` | `madmail registration` | [registration.md](../guide/cli/registration.md) |
+| `/admin/federation/rules` | `madmail federation` | [federation.md](../guide/cli/federation.md) |
+| `/admin/dns` | `madmail endpoint-cache` | [endpoint-cache.md](../guide/cli/endpoint-cache.md) |
+| `/admin/blocklist` | `madmail blocklist` | [blocklist.md](../guide/cli/blocklist.md) |
+| `/admin/accounts` | `madmail accounts` | [accounts.md](../guide/cli/accounts.md) |
+| `/admin/services/push` | `madmail push` | [push.md](../guide/cli/push.md) |
+| `/admin/services/webimap` | `madmail webimap` | [webimap.md](../guide/cli/webimap.md) |
+| `/admin/services/websmtp` | `madmail websmtp` | [websmtp.md](../guide/cli/websmtp.md) |
+| `/admin/services/admin_web` | `madmail admin-web` | [admin-web.md](../guide/cli/admin-web.md) |
+| `/admin/settings/*` ports | `madmail port` | [port.md](../guide/cli/port.md) |
+| Message size settings | `madmail message-size` | [message-size.md](../guide/cli/message-size.md) |
+| `/admin/queue` purge | `madmail tasks run` | [tasks-run.md](../guide/cli/tasks-run.md) |
+| Bearer token | `madmail admin-token` | [admin-token.md](../guide/cli/admin-token.md) |
+
+Use `--json` on CLI for machine-readable output ([`json-output.md`](../guide/cli/json-output.md)).
 
 ## Implementation references
 

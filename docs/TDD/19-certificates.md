@@ -5,6 +5,8 @@ Tutorials: [`only-chatmail-domain-setup-auto-cert.md`](../../context/madmail/doc
 
 Implementation: `crates/chatmail-acme/` ([lers](https://github.com/akrantz01/lers) for ACME HTTP-01), `crates/chatmail-tls/` (load PEM at runtime).
 
+**Operator guide:** [`../guide/cli/certificate.md`](../guide/cli/certificate.md) · [`certificate-autocert.md`](../guide/cli/certificate-autocert.md) · install: [`../guide/cli/install.md`](../guide/cli/install.md).
+
 ## Difference from Madmail (maddy) autocert loader
 
 Madmail can embed an **maddy `autocert` loader** in `maddy.conf` that obtains certs on first TLS connection. **chatmail-rs** always uses:
@@ -39,6 +41,12 @@ Auto-detect (no `--tls-mode`):
 | `{state_dir}/autocert/account.key.pem` | ACME account key (lers renewals) |
 
 ## CLI
+
+### `madmail certificate autocert`
+
+- [`certificate-autocert-enable.md`](../guide/cli/certificate-autocert-enable.md) — writes `tls_mode autocert` + `acme_email` to config via `chatmail-config::update_config_autocert`
+- [`certificate-autocert-status.md`](../guide/cli/certificate-autocert-status.md) — shows mode, contact email, renewal eligibility
+- Enables the in-process daily renewal loop ([21-scheduled-maintenance.md](21-scheduled-maintenance.md)) when server runs
 
 ### `madmail certificate get`
 
@@ -87,9 +95,22 @@ Writes `/etc/madmail/madmail.conf` (or `{binary}.conf`), creates state dirs, opt
 
 ## Renewal
 
+### In-process (`tls_mode autocert`)
+
+When `maddy.conf` sets `tls_mode autocert`, `chatmail run` starts a **daily** renewal loop via `chatmail-tasks::spawn_maintenance_scheduler`:
+
+1. `SupervisorCertRenewer` (`chatmail/src/supervisor/cert_renew.rs`) checks PEM expiry.
+2. Renews when fewer than **30 days** remain (DNS) or **4 days** (IP / short-lived profile).
+3. Stops the plain HTTP listener on port 80, runs HTTP-01 via `chatmail-acme`, reloads TLS listeners.
+4. Manual trigger: `madmail tasks run renew-certificate` (aliases: `renew-cert`, `certificate-renew`).
+
+Requires port 80 to be available during issuance (same as CLI `certificate get`).
+
+### External (cron / systemd timer)
+
 - **Cron/systemd timer:** `madmail certificate get` (idempotent)
 - **IP certificates (`--auto-ip-cert`):** ~6-day lifetime; renew when fewer than 4 days remain — run `certificate get` daily (free port 80 during issuance). See [`../install-simple-ip-acme.md`](../install-simple-ip-acme.md).
-- **After renew:** `systemctl reload madmail` or `madmail reload` when implemented
+- **After renew:** `systemctl reload madmail` or `madmail reload`
 
 ## DNS-01 (`acme` mode)
 

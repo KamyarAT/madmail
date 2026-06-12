@@ -1,6 +1,8 @@
 # Authentication & JIT Registration
 
-**Implementation:** `crates/chatmail-auth` (`jit`, `hash`, `validate`), `crates/chatmail-state::AuthCache`, wired from IMAP/SMTP/Web handlers.
+**Implementation:** `crates/chatmail-auth` (`jit`, `hash`, `validate`), `chatmail-state::AuthCache`, `jit_flights` (per-user login coalescing), wired from IMAP/SMTP/Web handlers.
+
+**Operator CLI:** [`../guide/cli/registration.md`](../guide/cli/registration.md) · [`registration-tokens.md`](../guide/cli/registration-tokens.md) · [`accounts.md`](../guide/cli/accounts.md) · [`blocklist.md`](../guide/cli/blocklist.md).
 
 ## JIT (Just-In-Time) Registration
 

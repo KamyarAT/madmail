@@ -2,6 +2,8 @@
 
 **Implementation:** inbound HTTP — `crates/chatmail-fed` (`mxdeliv`, `security`); outbound — `crates/chatmail-delivery`; stats — `chatmail-state::tracker` + `chatmail-db`.
 
+**Operator CLI:** [`../guide/cli/federation.md`](../guide/cli/federation.md) · [`endpoint-cache.md`](../guide/cli/endpoint-cache.md) · TDD [14-cli-tools.md](14-cli-tools.md).
+
 ## Overview
 Chatmail uses **HTTP-based federation** as the primary delivery method between servers, with traditional SMTP as fallback. This enables reliable delivery even for IP-only deployments without DNS MX records.
 
@@ -71,7 +73,7 @@ Used to:
 - Redirect during migrations
 - Override IP literals
 
-CLI: `maddy endpoint-cache set ...` (to be implemented as `chatmail-rs endpoint set`)
+CLI: [`madmail endpoint-cache set`](../guide/cli/endpoint-cache-set.md) (alias `dns-cache`); federation policy: [`madmail federation`](../guide/cli/federation.md) including `dismiss` / `undismiss` for silent-dismiss cache (`chatmail-state::silent_dismiss`)
 
 ## FederationTracker (In-Memory)
 Critical for diagnostics:
@@ -86,7 +88,8 @@ Flushed to DB every 30s. Exposed via `/admin/federation/servers`
 
 | Madmail path | chatmail-rs crate | Notes |
 |--------------|-------------------|-------|
-| `internal/target/remote/` | `chatmail-delivery` | `queue`, `router`, `transport` — HTTP `/mxdeliv` then SMTP fallback |
+| `internal/target/remote/` | `chatmail-delivery` | `queue`, `router`, `transport`, `federation_http` — shared `reqwest` client for `/mxdeliv` POSTs |
+| `internal/target/queue/queue.go` | `chatmail-config::queue` | `target.queue` settings parsed into `AppConfig.queue` |
 | `internal/endpoint/chatmail/` (`/mxdeliv`) | `chatmail-fed` | `mxdeliv.rs`, `security.rs`; listener in `server.rs` |
 | `internal/federationtracker/` | `chatmail-state::tracker` | Flushed via `chatmail-state::flusher` → `chatmail-db` |
 | `internal/endpoint_cache/` | `chatmail-db::endpoint_cache` | Overrides read on outbound routing |
