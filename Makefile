@@ -4,7 +4,7 @@
 # Deploy: `make push` builds release chatmail, scp's to test servers, replaces binary, restarts systemd (no signing).
 
 .PHONY: all init build build-admin-web build-chatmail-embed build-chatmail-embed-release build-with-admin-web build-release build-profiling build-release-static build-workspace build-all build-landing preview-landing \
-	test test-unit test-integration test-e2e test-maintenance test-imap test-turn test-core-turn test-deltachat test-dclogin relay-ping-build relay-ping-clean t1-bench t1-report-demo \
+	test test-unit test-integration test-e2e test-maintenance test-imap test-turn test-core-turn test-deltachat test-deltachat-cmlxc test-mini-cmlxc test-full-cmlxc test-cmlxc-fullrun test-cmlxc-fullrun-madmail _test-cmlxc-prereqs test-dclogin relay-ping-build relay-ping-clean t1-bench t1-report-demo \
 	check vet lint fmt fmt-check run run-bg run-debug restart stop logs reset-db dev-certs clean help \
 	sign push push1 push2 log1 log2 push-signed publish init-publish build-publish \
 	man man-lint man-check
@@ -225,13 +225,18 @@ test-core-turn:
 	@test -x scripts/core-e2e-turn.sh || (echo "scripts/core-e2e-turn.sh missing (P9-S10)"; exit 1)
 	./scripts/core-e2e-turn.sh
 
-# Delta Chat RPC E2E (deltachat-test) in Incus: static binary deploy + cmlxc test runner.
-# First time: make test-deltachat DC_TEST_ARGS='--init'
-# Optional: CHATMAIL_BIN=target/release/madmail make test-deltachat
-test-deltachat:
+# Delta Chat RPC E2E (deltachat-test) via cmlxc/Incus: deploy static madmail-v2 + run deltachat-test.
+# First time:  make test-deltachat-cmlxc DC_TEST_ARGS='--init'
+# Bigfile:      make test-deltachat-cmlxc DC_TEST_ARGS='--test-23 --cool'
+# + mini tests: make test-deltachat-cmlxc DC_TEST_ARGS='--mini --test-23 --cool'
+# Mini only:    make test-mini-cmlxc
+# Full suite:   make test-full-cmlxc  (mini + deltachat tests 1–19, 22–23)
+# Delchat only: make test-deltachat-cmlxc DC_TEST_ARGS='--all --cool'
+# Binary:       CHATMAIL_BIN=target/release/madmail make test-deltachat-cmlxc
+_test-cmlxc-prereqs:
 	chmod +x tests/deltachat-test-incus.sh tests/deltachat-test-deploy.py
-	@command -v uv >/dev/null || (echo "test-deltachat needs uv: https://docs.astral.sh/uv/"; exit 1)
-	@command -v incus >/dev/null || (echo "test-deltachat needs incus on PATH"; exit 1)
+	@command -v uv >/dev/null || (echo "cmlxc E2E needs uv: https://docs.astral.sh/uv/"; exit 1)
+	@command -v incus >/dev/null || (echo "cmlxc E2E needs incus on PATH"; exit 1)
 	@if [ ! -f "$(CMLXC_DIR)/pyproject.toml" ]; then \
 		echo "-- Initializing cmlxc submodule ($(CMLXC_DIR))..."; \
 		git submodule update --init $(CMLXC_DIR); \
@@ -239,7 +244,40 @@ test-deltachat:
 	@if [ ! -f "$(CMLXC_DIR)/pyproject.toml" ]; then \
 		echo "-- [!] $(CMLXC_DIR)/pyproject.toml missing (run: git submodule update --init $(CMLXC_DIR))"; exit 1; \
 	fi
+
+test-deltachat-cmlxc: _test-cmlxc-prereqs
 	./tests/deltachat-test-incus.sh $(DC_TEST_ARGS)
+
+# cmlxc relay_minitest (cross-relay pytest) — deploy madmail-v2, no deltachat-test.
+test-mini-cmlxc: _test-cmlxc-prereqs
+	./tests/deltachat-test-incus.sh --mini-only $(DC_TEST_ARGS)
+
+# relay_minitest + full deltachat-test (--all: tests 1–19, 22–23; not 20/21 exchanger).
+test-full-cmlxc: _test-cmlxc-prereqs
+	./tests/deltachat-test-incus.sh --mini --all --cool $(DC_TEST_ARGS)
+
+# cmlxc fullrun (cmdeploy + madmail-v2 from this repo): pytest tests/fullrun.py in submodule.
+# Default CMLXC_FULLRUN_REUSE=1: reuse healthy fulltest* containers (skip cmdeploy redeploy).
+# madmail: --reuse swaps target/release/madmail only. Broken/partial relay? deploy once, then reuse.
+# Fresh redeploy (stop/destroy CT1, full cmdeploy): make test-cmlxc-fullrun CMLXC_FULLRUN_REUSE=0
+# madmail slice deploys target/release/madmail (--binary) built via build-release-static if missing.
+# IPv4-only (--ipv4-only on all deploys; no IPv6 wait).
+# Heavy on first run (git clones). Reset: uv run --project tests/cmlxc cmlxc destroy --all
+# Madmail-only (faster): make test-cmlxc-fullrun-madmail
+# Extra pytest args: make test-cmlxc-fullrun CMLXC_FULLRUN_ARGS='-k test_madmail'
+CMLXC_FULLRUN_REUSE ?= 1
+test-cmlxc-fullrun: _test-cmlxc-prereqs
+	@cd $(CMLXC_DIR) && uv sync -q --group dev --reinstall-package cmlxc
+	@cd $(CMLXC_DIR) && PATH="$$(dirname "$$(uv run which cmlxc)")":$$PATH \
+		CMLXC_FULLRUN_REUSE=$(CMLXC_FULLRUN_REUSE) \
+		uv run --group dev pytest tests/fullrun.py -v -x -s $(CMLXC_FULLRUN_ARGS)
+
+# madmail-v2 slice of fullrun: deploy-madmail + test-mini + test-madmail + cross-relay mini.
+test-cmlxc-fullrun-madmail: _test-cmlxc-prereqs
+	@$(MAKE) test-cmlxc-fullrun CMLXC_FULLRUN_ARGS='-k "mad_deploy or mad_deploy_type or mini_madmail or test_madmail or cross_madmail or cross_ipv4_mad"'
+
+# Alias for test-deltachat-cmlxc (same Incus + cmlxc harness).
+test-deltachat: test-deltachat-cmlxc
 
 test: test-unit
 
@@ -429,7 +467,7 @@ help:
 	@echo "Run:       run, restart, dev-certs, dev-bind-cap (Linux <1024 ports), reset-db, install, preview-landing"
 	@echo "Admin UI:  edit $(ADMIN_WEB_DIR) → make build-with-admin-web → make restart"
 	@echo "Deploy:    push, push1 (unsigned), push2 (static+sign+upgrade), push-signed, sign (scripts/sign.sh), log1, log2 (scripts/deploy.sh)"
-	@echo "Test:      test, test-unit, test-e2e, test-maintenance, test-integration, test-imap, test-turn, test-deltachat, test-dclogin"
+	@echo "Test:      test, test-unit, test-e2e, test-maintenance, test-integration, test-imap, test-turn, test-full-cmlxc (madmail-v2), test-cmlxc-fullrun (cmdeploy+madmail-v2 fullrun), test-cmlxc-fullrun-madmail, test-deltachat-cmlxc, test-mini-cmlxc, test-dclogin"
 	@echo "Quality:   check, lint, fmt, fmt-check, man, man-lint, man-check"
 	@echo "relay-ping: relay-ping-build (in $(RELAY_PING_DIR))"
 	@echo "Init:      init (download iroh-relay $(IROH_RELAY_VERSION) into $(IROH_ASSETS)/)"

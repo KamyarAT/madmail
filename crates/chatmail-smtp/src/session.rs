@@ -691,10 +691,7 @@ mod tests {
     #[test]
     fn parse_path_addr_handles_ip_literal_with_size() {
         let line = "MAIL FROM:<user@[10.0.0.1]> SIZE=183";
-        assert_eq!(
-            parse_path_addr(line, "FROM:").unwrap(),
-            "user@[10.0.0.1]"
-        );
+        assert_eq!(parse_path_addr(line, "FROM:").unwrap(), "user@[10.0.0.1]");
         let rcpt = "RCPT TO:<peer@[10.0.0.2]>";
         assert_eq!(parse_path_addr(rcpt, "TO:").unwrap(), "peer@[10.0.0.2]");
     }
@@ -1301,6 +1298,64 @@ mod tests {
         let tls = s.format_ehlo(true);
         assert!(!tls.contains("STARTTLS"));
         assert!(tls.contains("250-AUTH PLAIN\r\n"));
+    }
+
+    /// Inbound port 25: STARTTLS upgrade for federation clients (e.g. filtermail-transport).
+    #[tokio::test]
+    async fn inbound_starttls_upgrade_without_auth() {
+        use rustls::pki_types::ServerName;
+        use tokio_rustls::TlsConnector;
+
+        let (tls_server, tls_client) = loopback_tls_configs();
+        let pool = chatmail_db::init_memory_db().await.unwrap();
+        let ctx = Arc::new(AppState::new(std::env::temp_dir(), pool.clone()));
+        let cfg = SmtpSessionConfig {
+            hostname: "mx.test".into(),
+            primary_domain: "test".into(),
+            local_domains: vec!["test".into()],
+            jit_domain: None,
+            credential_policy: CredentialPolicy::default(),
+            require_auth: false,
+            module: "smtp",
+            starttls_config: Some(tls_server),
+        };
+
+        let std_listener = StdListener::bind("127.0.0.1:0").unwrap();
+        std_listener.set_nonblocking(true).unwrap();
+        let addr = std_listener.local_addr().unwrap();
+        let pool_bg = pool.clone();
+        let ctx_bg = Arc::clone(&ctx);
+        let cfg_bg = cfg.clone();
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut session = SmtpSession::new(ctx_bg, pool_bg, cfg_bg);
+            let _ = session.handle_connection(stream).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+
+        let _ = read_smtp_until(&mut stream, "220 ").await;
+        smtp_write(&mut stream, "EHLO client.test").await;
+        let ehlo = read_smtp_until(&mut stream, "250 OK").await;
+        assert!(ehlo.contains("STARTTLS"), "pre-TLS EHLO: {ehlo}");
+
+        smtp_write(&mut stream, "STARTTLS").await;
+        let ready = read_smtp_until(&mut stream, "Ready to start TLS").await;
+        assert!(ready.contains("220 2.0.0"), "STARTTLS ready: {ready}");
+
+        let connector = TlsConnector::from(tls_client);
+        let server_name = ServerName::try_from("localhost").unwrap();
+        let mut tls = connector.connect(server_name, stream).await.unwrap();
+
+        smtp_write(&mut tls, "EHLO client.test").await;
+        let ehlo_tls = read_smtp_until(&mut tls, "250 OK").await;
+        assert!(!ehlo_tls.contains("STARTTLS"), "post-TLS EHLO: {ehlo_tls}");
+
+        smtp_write(&mut tls, "MAIL FROM:<sender@other.test>").await;
+        let mail_from = read_smtp_until(&mut tls, "250").await;
+        assert!(mail_from.contains("250"), "MAIL FROM: {mail_from}");
     }
 
     /// RFC 3207 / 8314: cleartext EHLO offers STARTTLS; AUTH blocked until upgrade.

@@ -95,6 +95,8 @@ pub const LANGUAGE: &str = "__LANGUAGE__";
 pub const APPENDLIMIT: &str = "__APPENDLIMIT__";
 /// `smtp` / `submission` `max_message_size` override (e.g. `100M`).
 pub const MAX_MESSAGE_SIZE: &str = "__MAX_MESSAGE_SIZE__";
+/// `/mxdeliv` federation HTTP body cap override (e.g. `70M`).
+pub const MAX_FEDERATION_SIZE: &str = "__MAX_FEDERATION_SIZE__";
 
 /// Pseudo-username row in `quotas` for server-wide default cap.
 pub const GLOBAL_QUOTA_USERNAME: &str = "__GLOBAL_DEFAULT__";

@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::post;
 use axum::Router;
 use chatmail_db::DbPool;
@@ -34,8 +35,11 @@ use tracing::info;
 use crate::mxdeliv::{mxdeliv_handler, FedState};
 
 pub fn federation_router(state: FedState) -> Router {
+    // Axum defaults to 2 MiB; federated post-messages exceed that (cap: max_federation_size).
+    let max_body = state.app.federation_size.effective().max(1) as usize;
     Router::new()
         .route("/mxdeliv", post(mxdeliv_handler))
+        .layer(DefaultBodyLimit::max(max_body))
         .with_state(state)
 }
 
@@ -103,4 +107,80 @@ pub async fn run_http_listener(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use chatmail_config::AppConfig;
+    use chatmail_db::{init_memory_db, seed_install_defaults};
+    use chatmail_state::AppState;
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::mxdeliv::FedState;
+
+    async fn test_router_with_federation_limit(limit: &str) -> Router {
+        let pool = init_memory_db().await.unwrap();
+        seed_install_defaults(&pool).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let config = AppConfig::default();
+        let app = Arc::new(AppState::with_quota_and_message_limit(
+            dir.path(),
+            chatmail_config::DEFAULT_QUOTA_BYTES,
+            &config,
+            pool.clone(),
+        ));
+        app.hydrate(&pool, &config).await.unwrap();
+        app.federation_size
+            .set_limit(&pool, &config, limit)
+            .await
+            .unwrap();
+        let state = FedState {
+            pool,
+            app,
+            primary_domain: "example.org".into(),
+            local_domains: chatmail_types::build_local_domains("example.org", None),
+        };
+        federation_router(state)
+    }
+
+    /// P7-UT04: Axum default body limit is 2 MiB; federation must accept larger POST bodies.
+    #[tokio::test]
+    async fn p7_ut04_federation_router_accepts_body_above_axum_default() {
+        let router = test_router_with_federation_limit("4M").await;
+        let body = vec![0u8; 3 * 1024 * 1024];
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/mxdeliv")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// P7-UT05: bodies over `max_federation_size` are rejected at the HTTP layer (413).
+    #[tokio::test]
+    async fn p7_ut05_federation_router_rejects_body_over_limit() {
+        let router = test_router_with_federation_limit("4M").await;
+        let body = vec![0u8; 5 * 1024 * 1024];
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/mxdeliv")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
 }

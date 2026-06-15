@@ -17,6 +17,7 @@
 
 pub mod auth;
 pub mod events;
+pub mod federation_size;
 pub mod flusher;
 pub mod listener_ports;
 pub mod message_size;
@@ -38,6 +39,7 @@ use tokio::sync::Mutex;
 
 pub use auth::AuthCache;
 pub use events::{EventBus, NewMessageEvent};
+pub use federation_size::FederationSizeLimit;
 pub use flusher::{flush_federation_stats, flush_modseq, start_flusher, FlusherHandle};
 pub use listener_ports::{ListenerPorts, ListenerPortsStore};
 pub use message_size::MessageSizeLimit;
@@ -52,6 +54,7 @@ pub use tracker::{FederationTracker, ServerStat};
 pub struct AppState {
     pub auth: Arc<AuthCache>,
     pub message_size: Arc<MessageSizeLimit>,
+    pub federation_size: Arc<FederationSizeLimit>,
     pub quota: Arc<QuotaCache>,
     pub federation_tracker: Arc<FederationTracker>,
     pub federation_policy: Arc<FederationPolicyCache>,
@@ -97,6 +100,7 @@ impl AppState {
         Self {
             auth: Arc::new(AuthCache::new()),
             message_size: Arc::new(MessageSizeLimit::new(config)),
+            federation_size: Arc::new(FederationSizeLimit::new(config)),
             quota: Arc::new(QuotaCache::new(default_quota_bytes)),
             federation_tracker: Arc::new(FederationTracker::new()),
             federation_policy: Arc::new(FederationPolicyCache::new()),
@@ -130,6 +134,13 @@ impl AppState {
         Ok(())
     }
 
+    pub fn check_federation_size(&self, len: usize) -> Result<()> {
+        if len as u64 > self.federation_size.effective() {
+            return Err(chatmail_types::ChatmailError::message_too_large());
+        }
+        Ok(())
+    }
+
     /// Queue XDELTAPUSH device notifications after inbound mail (skips self-sent).
     pub async fn notify_inbound_push(&self, pool: &DbPool, mail_from: &str, rcpt: &str) {
         if push_runtime_enabled(pool).await.unwrap_or(false)
@@ -142,6 +153,7 @@ impl AppState {
     pub async fn hydrate(&self, pool: &DbPool, config: &AppConfig) -> Result<()> {
         self.auth.hydrate(pool).await?;
         self.message_size.hydrate(pool, config).await?;
+        self.federation_size.hydrate(pool, config).await?;
         self.quota.hydrate(pool, &self.mailbox_store).await?;
         self.federation_policy.hydrate(pool).await?;
         self.federation_silent_dismiss.hydrate(pool).await?;

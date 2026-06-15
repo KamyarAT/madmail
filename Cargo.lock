@@ -716,6 +716,7 @@ name = "chatmail-fed"
 version = "2.8.2"
 dependencies = [
  "axum",
+ "chatmail-config",
  "chatmail-db",
  "chatmail-pgp",
  "chatmail-state",
@@ -729,6 +730,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
+ "tower",
  "tracing",
  "uuid",
 ]

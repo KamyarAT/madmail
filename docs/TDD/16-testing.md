@@ -21,6 +21,7 @@ Chatmail's correctness is defined by **real Delta Chat client behavior**, not ju
   - PGP MIME/header policy (`chatmail-pgp::enforce_encryption` — Secure-Join, bounces, PGP-MIME)
   - Quota cache concurrency safety
   - Federation policy evaluation + normalization (IP brackets, case)
+  - **Federation HTTP body limit** (`FederationSizeLimit`, Axum `DefaultBodyLimit` on `/mxdeliv`, default 70M)
   - Endpoint cache resolution
   - Settings toggle logic
   - **Auth cache** (credentials, blocklist, JIT flag hydrate + write-through)
@@ -41,6 +42,8 @@ Chatmail's correctness is defined by **real Delta Chat client behavior**, not ju
 | Push notify | `chatmail-push`, `chatmail-admin` | `push_mode_and_circuit_breaker`, `successful_delivery_increments_push_stats`, `p9_push_service_toggle` |
 | IMAP push E2E | `tests/imap_e2e.rs` | `imap_e2e_push_devicetoken_setmetadata`, `imap_e2e_push_disabled_hides_capabilities` |
 | SMTP submission | `chatmail-smtp` | `submission_starttls_upgrade_then_auth_allowed` |
+| Federation body limit | `chatmail-fed`, `chatmail-state`, `chatmail-config`, `chatmail-admin` | `p7_ut04`–`p7_ut06`, `federation_size_*`, `admin_federation_size_*` |
+| Bigfile roundtrip E2E | `tests/deltachat-test` | `test_23_bigfile_roundtrip.py` (5 MiB SHA-256, two relays, &lt;60s) |
 
 Run cmping unit tests: `cd context/cmping && uv run python -m unittest test_cmping_dclogin.py -v`
 

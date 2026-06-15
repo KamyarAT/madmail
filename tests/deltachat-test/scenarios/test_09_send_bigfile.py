@@ -271,4 +271,9 @@ def run(sender, receiver, test_dir, remotes, extra_accounts=()):
         # Restore a reasonable default limit
         set_message_limits(REMOTE1, "100M")
         set_message_limits(REMOTE2, "100M")
+        # Limit/logging restores reload madmail; reconnect clients so later tests
+        # (e.g. test_23 bigfile roundtrip) still receive over IMAP.
+        receiver.set_config("download_limit", "268435456")
+        restart_accounts_io(sender, receiver, *extra_accounts)
+        wait_accounts_idle(sender, receiver, *extra_accounts)
 

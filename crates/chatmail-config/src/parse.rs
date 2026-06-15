@@ -107,6 +107,7 @@ fn toml_to_app_config(content: &str) -> Result<AppConfig> {
         unused_account_retention: None,
         appendlimit: None,
         max_message_size: None,
+        max_federation_size: None,
         mail_fsync: None,
         blob_dedup: None,
         mail_domain: None,

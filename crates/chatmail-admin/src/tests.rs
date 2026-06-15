@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use chatmail_config::AppConfig;
-use chatmail_config::DEFAULT_MAX_MESSAGE_BYTES;
+use chatmail_config::{DEFAULT_MAX_FEDERATION_BYTES, DEFAULT_MAX_MESSAGE_BYTES};
 use chatmail_db::{
     get_bool_setting, init_memory_db, message_stats_snapshot, record_smtp_accepted,
     seed_install_defaults, settings_keys,
@@ -383,6 +383,91 @@ async fn admin_message_size_put_rejects_invalid() {
     .await
     .unwrap_err();
     assert_eq!(err.0, 400);
+}
+
+#[tokio::test]
+async fn admin_federation_size_get_put_delete() {
+    let (st, _dir) = test_state(
+        "secret-token-01234567890123456789012345678901",
+        AppConfig::default(),
+    )
+    .await;
+
+    let (_, body) = resources::dispatch(&st, "GET", "/admin/federation-size", &json!({}))
+        .await
+        .unwrap();
+    let body = body.unwrap();
+    assert_eq!(
+        body.get("effective_bytes").and_then(|v| v.as_u64()),
+        Some(DEFAULT_MAX_FEDERATION_BYTES)
+    );
+    assert_eq!(body.get("effective").and_then(|v| v.as_str()), Some("70M"));
+
+    let (_, body) = resources::dispatch(
+        &st,
+        "PUT",
+        "/admin/federation-size",
+        &json!({ "size": "64M" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        body.unwrap()
+            .get("effective_bytes")
+            .and_then(|v| v.as_u64()),
+        Some(64 * 1024 * 1024)
+    );
+    assert_eq!(st.app.federation_size.effective(), 64 * 1024 * 1024);
+
+    let (_, body) = resources::dispatch(&st, "DELETE", "/admin/federation-size", &json!({}))
+        .await
+        .unwrap();
+    assert_eq!(
+        body.unwrap()
+            .get("effective_bytes")
+            .and_then(|v| v.as_u64()),
+        Some(DEFAULT_MAX_FEDERATION_BYTES)
+    );
+}
+
+#[tokio::test]
+async fn admin_federation_settings_includes_size() {
+    let (st, _dir) = test_state(
+        "secret-token-01234567890123456789012345678901",
+        AppConfig::default(),
+    )
+    .await;
+    let (_, body) = resources::dispatch(&st, "GET", "/admin/settings/federation", &json!({}))
+        .await
+        .unwrap();
+    let body = body.unwrap();
+    assert_eq!(
+        body.get("federation_size_effective_bytes")
+            .and_then(|v| v.as_u64()),
+        Some(DEFAULT_MAX_FEDERATION_BYTES)
+    );
+    assert_eq!(
+        body.get("max_federation_size").and_then(|v| v.as_str()),
+        Some("70M")
+    );
+}
+
+#[tokio::test]
+async fn admin_settings_max_federation_size_updates_effective() {
+    let (st, _dir) = test_state(
+        "secret-token-01234567890123456789012345678901",
+        AppConfig::default(),
+    )
+    .await;
+    resources::dispatch(
+        &st,
+        "POST",
+        "/admin/settings/max_federation_size",
+        &json!({ "action": "set", "value": "55M" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(st.app.federation_size.effective(), 55 * 1024 * 1024);
 }
 
 #[tokio::test]

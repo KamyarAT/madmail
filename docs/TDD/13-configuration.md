@@ -27,6 +27,7 @@ Reference: [`context/madmail/maddy.conf`](../../context/madmail/maddy.conf), [`s
 | `runtime_dir` | PID / runtime sockets |
 | `debug` | `yes` → debug logging |
 | `log` | `stderr` / `off` / `syslog` (default: off when omitted) |
+| `max_federation_size` | `max_federation_size` (e.g. `70M`) — `/mxdeliv` HTTP body cap; see [`07-federation.md`](07-federation.md) |
 | `hostname` | SMTP hostname when not only in `$(hostname)` |
 | `tls { loader … }` | Parsed as `tls_mode` hint; **runtime** uses `tls file` PEM paths only |
 | `tls file <cert> <key>` | `tls_cert_path`, `tls_key_path` — used by madmail-v2 TLS listeners |
@@ -237,6 +238,7 @@ Admin: `GET /admin/settings` (bulk) or `GET|POST /admin/settings/{name}` (`set` 
 | `__LANGUAGE__` | `language` | www UI language (`en`, `fa`, `ru`, `es`) |
 | `__APPENDLIMIT__` | `appendlimit` | IMAP append cap (e.g. `100M`) |
 | `__MAX_MESSAGE_SIZE__` | `max_message_size` | SMTP cap; effective = min(appendlimit, max) |
+| `__MAX_FEDERATION_SIZE__` | `max_federation_size` | `/mxdeliv` HTTP body cap (default `70M`; seeded on install) |
 | `__MESSAGE_RETENTION__` | `message_retention` | Duration (`30d`, `720h`, …) when retention enabled |
 
 CLI: [`madmail port`](../guide/cli/port.md), [`madmail message-size`](../guide/cli/message-size.md). Ports and dclogin hints are read via `chatmail-config::effective_*` at listener bind and on www page render.

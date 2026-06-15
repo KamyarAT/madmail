@@ -25,6 +25,8 @@ use std::path::PathBuf;
 const VERSION: &str = "v0.35.0";
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(embed_iroh)");
+
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let assets = manifest_dir.join("assets");

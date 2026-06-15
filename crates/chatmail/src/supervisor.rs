@@ -382,7 +382,7 @@ impl SupervisorInner {
             addrs.smtp.clone(),
             smtp_cancel.clone(),
             None,
-            None,
+            tls_config.clone(),
             Arc::clone(&self.app),
             self.pool.clone(),
             self.smtp_cfg.clone(),

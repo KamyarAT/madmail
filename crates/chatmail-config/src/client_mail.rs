@@ -512,6 +512,7 @@ pub fn listeners_need_tls_cert(runtime: &RuntimeListeners) -> bool {
         || runtime.http_tls_addr.is_some()
         || runtime.imap_plain_addr.is_some()
         || runtime.submission_plain_addr.is_some()
+        || runtime.smtp_addr.is_some()
 }
 
 fn clean_host(s: &str) -> String {
@@ -611,7 +612,7 @@ mod tests {
             http_plain_addr: Some("0.0.0.0:8080".into()),
             http_tls_addr: None,
         };
-        assert!(!listeners_need_tls_cert(&smtp_only));
+        assert!(listeners_need_tls_cert(&smtp_only));
     }
 
     #[test]

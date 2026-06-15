@@ -195,6 +195,9 @@ fn apply_directive(name: &str, args: &[String], block_path: &[&str], cfg: &mut A
             "runtime_dir" if has_value => cfg.runtime_dir = Some(value.clone().into()),
             "debug" => cfg.debug = parse_bool(arg0),
             "log" if has_value => cfg.log_target = Some(value.clone()),
+            "max_federation_size" if has_value => {
+                cfg.max_federation_size = Some(value.clone());
+            }
             "hostname" if has_value && cfg.hostname.is_none() => {
                 cfg.hostname = Some(value.clone());
             }

@@ -29,8 +29,9 @@ Server must:
 2. Parse RFC 5322 body
 3. Run federation policy check on sender domain
 4. Run PGP enforcement
-5. Deliver to each recipient's mailbox via `DeliveryTarget`
-6. Return `403 Forbidden` when federation policy rejects the sender (Madmail); do not accept and answer `200` for blocked mail
+5. Enforce **`max_federation_size`** (default **70M**, separate from SMTP/IMAP `max_message_size`) — Axum `DefaultBodyLimit` on `/mxdeliv` matches the effective cap so large Delta Chat post-messages are not rejected at 2 MiB
+6. Deliver to each recipient's mailbox via `DeliveryTarget`
+7. Return `403 Forbidden` when federation policy rejects the sender (Madmail); do not accept and answer `200` for blocked mail
 
 ### Response Codes
 | Code | Meaning |
@@ -90,7 +91,8 @@ Flushed to DB every 30s. Exposed via `/admin/federation/servers`
 |--------------|-------------------|-------|
 | `internal/target/remote/` | `chatmail-delivery` | `queue`, `router`, `transport`, `federation_http` — shared `reqwest` client for `/mxdeliv` POSTs |
 | `internal/target/queue/queue.go` | `chatmail-config::queue` | `target.queue` settings parsed into `AppConfig.queue` |
-| `internal/endpoint/chatmail/` (`/mxdeliv`) | `chatmail-fed` | `mxdeliv.rs`, `security.rs`; listener in `server.rs` |
+| `internal/endpoint/chatmail/` (`/mxdeliv`) | `chatmail-fed` | `mxdeliv.rs`, `security.rs`; `server.rs` (`DefaultBodyLimit` from `FederationSizeLimit`) |
+| Federation HTTP body cap | `chatmail-state::federation_size` | Default **70M**; DB `__MAX_FEDERATION_SIZE__`; config `max_federation_size` |
 | `internal/federationtracker/` | `chatmail-state::tracker` | Flushed via `chatmail-state::flusher` → `chatmail-db` |
 | `internal/endpoint_cache/` | `chatmail-db::endpoint_cache` | Overrides read on outbound routing |
 | Federation policy / silent dismiss | `chatmail-state::policy`, `silent_dismiss` | Hydrated from `chatmail-db::federation_policy` |
@@ -127,4 +129,20 @@ Federation wire format and HTTP delivery. Index: [`RFC/README.md`](RFC/README.md
 Regenerate offline copies: [`RFC/download-rfcs.sh`](RFC/download-rfcs.sh).
 
 ## Testing
+
+### Unit tests (`cargo test`)
+
+| ID | Crate | Scope |
+|----|-------|--------|
+| `p7_ut04_federation_router_accepts_body_above_axum_default` | `chatmail-fed` | 3 MiB POST passes HTTP layer when limit is 4M (not Axum 2 MiB default) |
+| `p7_ut05_federation_router_rejects_body_over_limit` | `chatmail-fed` | 5 MiB POST → HTTP 413 when limit is 4M |
+| `p7_ut06_rejects_body_over_federation_size` | `chatmail-fed` | `handle_mxdeliv` enforces `check_federation_size` → 413 |
+| `federation_size_*` | `chatmail-state` | DB seed 70M, set/reset |
+| `effective_max_federation_bytes_*` | `chatmail-config` | Defaults, maddy.conf parse, DB resolve |
+| `admin_federation_size_*` | `chatmail-admin` | `/admin/federation-size`, settings federation snapshot |
+
+### E2E
+
 Must pass `test_07_federation.py` (Parts A–D), including port blocking scenarios (HTTPS only, HTTP only, SMTP only).
+
+**Big-file roundtrip:** `test_23_bigfile_roundtrip.py` — 5 MiB SHA-256 cross-relay via pre/post split; requires federation body limit ≥ post-message size (~7–8 MiB encrypted). Regression: outbound queue log `413 Payload Too Large` on `/mxdeliv`.

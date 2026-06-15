@@ -51,7 +51,7 @@ def _ensure_init(ix, out) -> None:
             out.print("cmlxc environment already initialized")
             return
 
-    out.print("cmlxc not initialized — run: make test-deltachat DC_TEST_ARGS='--init'")
+    out.print("cmlxc not initialized — run: make test-deltachat-cmlxc DC_TEST_ARGS='--init'")
     raise SystemExit(1)
 
 

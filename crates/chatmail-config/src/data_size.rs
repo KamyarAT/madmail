@@ -28,6 +28,12 @@ pub const DEFAULT_MAX_MESSAGE_BYTES: u64 = 100 * 1024 * 1024;
 /// Default human-readable size for install / DB seed.
 pub const DEFAULT_MAX_MESSAGE_SIZE: &str = "100M";
 
+/// Default `/mxdeliv` federation HTTP body cap when config and DB omit `max_federation_size` (70 MiB).
+pub const DEFAULT_MAX_FEDERATION_BYTES: u64 = 70 * 1024 * 1024;
+
+/// Default human-readable federation size for install / DB seed.
+pub const DEFAULT_MAX_FEDERATION_SIZE: &str = "70M";
+
 /// Effective server-wide default quota: `default_quota` from config, else [`DEFAULT_QUOTA_BYTES`].
 pub fn effective_default_quota_bytes(config: &crate::AppConfig) -> u64 {
     config
@@ -52,6 +58,26 @@ pub fn effective_max_message_bytes(config: &crate::AppConfig) -> u64 {
         (Some(a), None) => a,
         (None, Some(b)) => b,
         (None, None) => DEFAULT_MAX_MESSAGE_BYTES,
+    }
+}
+
+/// Effective federation HTTP body cap from `maddy.conf` / `chatmail.toml` only.
+pub fn effective_max_federation_bytes(config: &crate::AppConfig) -> u64 {
+    config
+        .max_federation_size
+        .as_deref()
+        .and_then(|s| parse_data_size(s).ok())
+        .unwrap_or(DEFAULT_MAX_FEDERATION_BYTES)
+}
+
+/// Effective federation cap from config file + optional DB override (`__MAX_FEDERATION_SIZE__`).
+pub fn resolve_max_federation_bytes(
+    config_effective: u64,
+    db: Option<&str>,
+) -> Result<u64, ChatmailError> {
+    match db {
+        Some(s) => parse_data_size(s),
+        None => Ok(config_effective),
     }
 }
 
@@ -180,6 +206,28 @@ mod tests {
     }
 
     #[test]
+    fn effective_max_federation_bytes_defaults_to_70m() {
+        assert_eq!(
+            effective_max_federation_bytes(&crate::AppConfig::default()),
+            DEFAULT_MAX_FEDERATION_BYTES
+        );
+        assert_eq!(DEFAULT_MAX_FEDERATION_BYTES, 70 * 1024 * 1024);
+    }
+
+    #[test]
+    fn resolve_max_federation_bytes_db_overrides_config() {
+        let config_eff = 70 * 1024 * 1024;
+        assert_eq!(
+            resolve_max_federation_bytes(config_eff, Some("50M")).unwrap(),
+            50 * 1024 * 1024
+        );
+        assert_eq!(
+            resolve_max_federation_bytes(config_eff, None).unwrap(),
+            config_eff
+        );
+    }
+
+    #[test]
     fn resolve_max_message_bytes_db_overrides_config() {
         let config_eff = 100 * 1024 * 1024;
         assert_eq!(
@@ -227,5 +275,18 @@ submission tcp://0.0.0.0:587 {
             ..Default::default()
         };
         assert_eq!(effective_max_message_bytes(&cfg), 32 * 1024 * 1024);
+    }
+
+    #[test]
+    fn maddy_conf_parses_max_federation_size() {
+        let content = r#"
+max_federation_size 70M
+storage.imapsql sqlite:///tmp/x.db {
+    appendlimit 100M
+}
+"#;
+        let cfg = crate::maddy::parse_maddy_config(content).unwrap();
+        assert_eq!(cfg.max_federation_size.as_deref(), Some("70M"));
+        assert_eq!(effective_max_federation_bytes(&cfg), 70 * 1024 * 1024);
     }
 }

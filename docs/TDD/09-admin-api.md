@@ -53,7 +53,7 @@ Madmail-compatible JSON-RPC admin API. Full operator reference: [`context/madmai
 | `/admin/services/webimap` | GET, POST | Implemented (`__WEBIMAP_ENABLED__`, default disabled) |
 | `/admin/services/websmtp` | GET, POST | Implemented (`__WEBSMTP_ENABLED__`, default disabled) |
 | `/admin/services/push` | GET, POST | Implemented — `__PUSH_MODE__` (`auto`/`on`/`off`, **default `off`**); POSTs device tokens to `notifications.delta.chat` when enabled; GET returns `successful_notifications`, `consecutive_failures`; POST `enable`/`disable`/`auto` → soft reload. See [23-push-notifications.md](23-push-notifications.md) |
-| `/admin/settings/federation` | GET, POST | Implemented |
+| `/admin/settings/federation` | GET, POST | Implemented — includes `max_federation_size`, `federation_size_effective` |
 | `/admin/federation/rules` | GET, POST, DELETE | Implemented |
 | `/admin/federation/silent-dismiss` | GET, POST, DELETE | Implemented — outbound domains accepted but not delivered (`federation_silent_dismiss` table) |
 | `/admin/federation/servers` | GET | Implemented (`FederationTracker`) |
@@ -74,6 +74,7 @@ Madmail-compatible JSON-RPC admin API. Full operator reference: [`context/madmai
 | `/admin/settings/ss_port`, `ss_cipher`, `ss_password`, … | GET, POST | Implemented when SS configured; `ss_ws_*` / `ss_grpc_*` settings stored but transports disabled |
 | `/admin/settings/http_proxy_*` | GET, POST | Stub — changes return 400 |
 | `/admin/message-size` | GET, PUT, DELETE | Implemented — effective cap (`appendlimit` ∧ `max_message_size`) |
+| `/admin/federation-size` | GET, PUT, DELETE | Implemented — `/mxdeliv` HTTP body cap (default **70M**); PUT/DELETE trigger HTTP routes reload |
 | `/admin/registration-token` | GET, POST, DELETE | Implemented — registration token CRUD |
 
 Toggle POST body: `{"action": "enable"}` or `{"action": "disable"}`.
@@ -145,7 +146,8 @@ crates/chatmail-admin/
   src/auth.rs       # Bearer + rate limit
   src/cors.rs       # CORS for admin API
   src/router.rs     # AdminState + axum POST /
-  src/resources/    # accounts, blocklist, dns, exchangers, federation, message_size,
+  src/resources/    # accounts, blocklist, dns, exchangers, federation, federation_size,
+                    # message_size,
                     # notice, proxy, push, queue, quota, settings, status_storage,
                     # toggles, tokens
 
@@ -169,6 +171,9 @@ crates/chatmail-fed/src/server.rs
 | `p9_ss_ws_and_grpc_transports_disabled` | WS/gRPC SS transports always disabled |
 | `p9_federation_silent_dismiss_crud` | `/admin/federation/silent-dismiss` CRUD |
 | `admin_message_size_get_put_delete` | `/admin/message-size` effective cap |
+| `admin_federation_size_get_put_delete` | `/admin/federation-size` effective cap (default 70M) |
+| `admin_federation_settings_includes_size` | `GET /admin/settings/federation` exposes federation size |
+| `admin_settings_max_federation_size_updates_effective` | `POST /admin/settings/max_federation_size` |
 | `p9_auth_gate_bearer` | constant-time Bearer check |
 | `p9_notice_post_delivers` | POST `/admin/notice` → local maildir |
 | `p9_queue_purge_blobs_older` | POST `/admin/queue` `purge_blobs_older` |

@@ -35,10 +35,6 @@ Uses `overview.users.registered` for broadcast recipient count.
 
 Broadcast requires confirmation modal showing total user count.
 
-## Implementation note
-
-The page calls `api.sendNotice()` directly (not via `store`). The API client returns `{ data, error, status }`, but the page currently references `res.body` and `store.showToast` — those identifiers do not exist on the store/API wrapper (`notify` and `data` are the correct ones). Toasts on this page may not work until that is fixed; the inline result panel still shows `sent` / `failed` when `data` is populated.
-
 ## Typical usage
 
 - Announce maintenance windows to all users

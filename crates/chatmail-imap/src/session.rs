@@ -2584,13 +2584,9 @@ mod integration_tests {
 
         let dir = tempfile::tempdir().unwrap();
         let pool = chatmail_db::init_memory_db().await.unwrap();
-        set_setting(
-            &pool,
-            settings_keys::JIT_REGISTRATION_ENABLED,
-            "true",
-        )
-        .await
-        .unwrap();
+        set_setting(&pool, settings_keys::JIT_REGISTRATION_ENABLED, "true")
+            .await
+            .unwrap();
         set_setting(&pool, settings_keys::REGISTRATION_OPEN, "true")
             .await
             .unwrap();
@@ -2632,7 +2628,10 @@ mod integration_tests {
             ("a003 LOGIN x@y@z longpassword", "a003"),
             ("a004 LOGIN user@[10.0.0.1] longpassword", "a004"),
         ] {
-            stream.write_all(format!("{cmd}\r\n").as_bytes()).await.unwrap();
+            stream
+                .write_all(format!("{cmd}\r\n").as_bytes())
+                .await
+                .unwrap();
             let resp = read_until(&mut stream, format!("{tag} NO").as_bytes()).await;
             let text = String::from_utf8_lossy(&resp);
             assert!(

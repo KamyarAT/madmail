@@ -20,6 +20,7 @@ mod blocklist;
 mod dns;
 mod exchangers;
 mod federation;
+mod federation_size;
 mod message_size;
 mod notice;
 mod proxy;
@@ -112,6 +113,7 @@ pub async fn dispatch(st: &AdminState, method: &str, resource: &str, body: &Valu
         "/admin/blocklist" => blocklist::blocklist(st, method, body).await,
         "/admin/quota" => quota::quota(st, method, body).await,
         "/admin/message-size" => message_size::message_size(st, method, body).await,
+        "/admin/federation-size" => federation_size::federation_size(st, method, body).await,
         "/admin/dns" => dns::dns(st, method, body).await,
         "/admin/exchangers" => exchangers::exchangers(st, method, body).await,
         "/admin/registration-token" => tokens::registration_token(st, method, body).await,

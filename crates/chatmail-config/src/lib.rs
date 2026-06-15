@@ -51,9 +51,10 @@ pub use client_mail::{
 };
 pub use credential_policy::CredentialPolicy;
 pub use data_size::{
-    effective_default_quota_bytes, effective_max_message_bytes, format_data_size, parse_data_size,
-    resolve_max_message_bytes, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_MESSAGE_SIZE,
-    DEFAULT_QUOTA_BYTES,
+    effective_default_quota_bytes, effective_max_federation_bytes, effective_max_message_bytes,
+    format_data_size, parse_data_size, resolve_max_federation_bytes, resolve_max_message_bytes,
+    DEFAULT_MAX_FEDERATION_BYTES, DEFAULT_MAX_FEDERATION_SIZE, DEFAULT_MAX_MESSAGE_BYTES,
+    DEFAULT_MAX_MESSAGE_SIZE, DEFAULT_QUOTA_BYTES,
 };
 pub use db_path::{
     effective_app_db_path, effective_database_config, DatabaseConfig, DbDriver, CHATMAIL_RS_DB,
@@ -106,6 +107,8 @@ pub struct AppConfig {
     pub appendlimit: Option<String>,
     /// `smtp` / `submission` `max_message_size` (e.g. `100M`).
     pub max_message_size: Option<String>,
+    /// `/mxdeliv` federation HTTP body cap (e.g. `70M`).
+    pub max_federation_size: Option<String>,
     /// `storage.imapsql mail_fsync` — `always`, `optimized`, or `never` (Dovecot parity).
     pub mail_fsync: Option<String>,
     /// `storage.imapsql blob_dedup` — content-addressed dedup for identical payloads.

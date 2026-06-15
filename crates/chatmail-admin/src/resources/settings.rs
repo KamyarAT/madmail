@@ -343,6 +343,11 @@ pub async fn all_settings(st: &AdminState, method: &str) -> AdminResult {
         "max_message_size",
         setting_value(pool, settings_keys::MAX_MESSAGE_SIZE, "").await?,
     );
+    insert_setting(
+        &mut body,
+        "max_federation_size",
+        setting_value(pool, settings_keys::MAX_FEDERATION_SIZE, "").await?,
+    );
     let effective = st.app.message_size.effective();
     insert_setting(
         &mut body,
@@ -350,6 +355,17 @@ pub async fn all_settings(st: &AdminState, method: &str) -> AdminResult {
         json!(format_data_size(effective)),
     );
     insert_setting(&mut body, "message_size_effective_bytes", json!(effective));
+    let federation_effective = st.app.federation_size.effective();
+    insert_setting(
+        &mut body,
+        "federation_size_effective",
+        json!(format_data_size(federation_effective)),
+    );
+    insert_setting(
+        &mut body,
+        "federation_size_effective_bytes",
+        json!(federation_effective),
+    );
 
     Ok((200, Some(Value::Object(body))))
 }
@@ -467,6 +483,7 @@ fn named_routes() -> HashMap<&'static str, NamedRoute> {
         ("language", k::LANGUAGE),
         ("appendlimit", k::APPENDLIMIT),
         ("max_message_size", k::MAX_MESSAGE_SIZE),
+        ("max_federation_size", k::MAX_FEDERATION_SIZE),
         ("message_retention", k::MESSAGE_RETENTION),
     ] {
         m.insert(path, value(key));
@@ -557,6 +574,7 @@ pub(crate) async fn generic_setting(
                         .await
                         .map_err(db_err)?;
                     super::message_size::refresh_message_size_after_setting(st, db_key).await;
+                    super::federation_size::refresh_federation_size_after_setting(st, db_key).await;
                     if db_key == chatmail_db::settings_keys::ADMIN_WEB_PATH {
                         super::toggles::trigger_http_routes_reload(st).await?;
                     }
@@ -565,6 +583,7 @@ pub(crate) async fn generic_setting(
                 "reset" => {
                     delete_setting(&st.pool, db_key).await.map_err(db_err)?;
                     super::message_size::refresh_message_size_after_setting(st, db_key).await;
+                    super::federation_size::refresh_federation_size_after_setting(st, db_key).await;
                     if db_key == chatmail_db::settings_keys::ADMIN_WEB_PATH {
                         super::toggles::trigger_http_routes_reload(st).await?;
                     }
@@ -681,6 +700,10 @@ fn validate_setting_value(key: &str, value: &str) -> Result<(), (u16, String)> {
 
     if key == settings_keys::APPENDLIMIT || key == settings_keys::MAX_MESSAGE_SIZE {
         return super::message_size::validate_message_size_value(value);
+    }
+
+    if key == settings_keys::MAX_FEDERATION_SIZE {
+        return super::federation_size::validate_federation_size_value(value);
     }
 
     if key == settings_keys::MESSAGE_RETENTION {

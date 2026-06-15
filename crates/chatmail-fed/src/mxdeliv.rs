@@ -43,6 +43,7 @@ pub fn mxdeliv_http_status(err: &ChatmailError) -> StatusCode {
         ChatmailError::FederationRejected(_) => StatusCode::FORBIDDEN,
         ChatmailError::EncryptionNeeded(_) => StatusCode::FORBIDDEN,
         ChatmailError::QuotaExceeded { .. } => StatusCode::INSUFFICIENT_STORAGE,
+        ChatmailError::MessageTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
         ChatmailError::Protocol(_) => StatusCode::BAD_REQUEST,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
@@ -64,6 +65,7 @@ fn status_body(err: &ChatmailError) -> &'static str {
         ChatmailError::FederationRejected(_) => "Forbidden",
         ChatmailError::EncryptionNeeded(_) => "Encryption Needed: Invalid Unencrypted Mail",
         ChatmailError::QuotaExceeded { .. } => "quota",
+        ChatmailError::MessageTooLarge => "message too large",
         ChatmailError::Protocol(_) => "bad request",
         _ => "error",
     }
@@ -107,6 +109,10 @@ async fn handle_mxdeliv(
         return Err(ChatmailError::FederationRejected(sender_domain));
     }
 
+    st.app.check_federation_size(body.len())?;
+    st.app.check_message_size(body.len())?;
+    st.app.quota.check_quota(&rcpt, body.len() as u64)?;
+
     enforce_encryption(
         body,
         &EnforceOptions {
@@ -114,9 +120,6 @@ async fn handle_mxdeliv(
             recipients: vec![rcpt.clone()],
         },
     )?;
-
-    st.app.check_message_size(body.len())?;
-    st.app.quota.check_quota(&rcpt, body.len() as u64)?;
 
     // Madmail: inbound HTTP counts on sender domain with empty transport (inbound_deliveries++).
     st.app
@@ -223,6 +226,47 @@ mod tests {
             mxdeliv_http_status(&ChatmailError::EncryptionNeeded("x".into())),
             StatusCode::FORBIDDEN
         );
+        assert_eq!(
+            mxdeliv_http_status(&ChatmailError::MessageTooLarge),
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+    }
+
+    /// P7-UT06: handler enforces `max_federation_size` before local delivery.
+    #[tokio::test]
+    async fn p7_ut06_rejects_body_over_federation_size() {
+        let pool = init_memory_db().await.unwrap();
+        chatmail_db::passwords::create_user(&pool, "user@example.org", "hash")
+            .await
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let config = chatmail_config::AppConfig::default();
+        let app = Arc::new(AppState::new(dir.path(), pool.clone()));
+        app.federation_policy.hydrate(&pool).await.unwrap();
+        app.auth.hydrate(&pool).await.unwrap();
+        app.federation_size
+            .set_limit(&pool, &config, "4M")
+            .await
+            .unwrap();
+
+        let st = FedState {
+            pool,
+            app,
+            primary_domain: "example.org".into(),
+            local_domains: chatmail_types::build_local_domains("example.org", None),
+        };
+
+        let pgp = b"From: a@peer.test\r\nTo: user@example.org\r\nContent-Type: multipart/encrypted; boundary=b\r\n\r\n--b\r\nContent-Type: application/pgp-encrypted\r\n\r\nv\r\n--b--\r\n";
+        let mut headers = HeaderMap::new();
+        headers.insert("x-mail-from", "sender@peer.test".parse().unwrap());
+        headers.insert("x-mail-to", "user@example.org".parse().unwrap());
+        let oversized = vec![b'x'; 5 * 1024 * 1024];
+
+        let err = handle_mxdeliv(&st, &headers, &oversized).await.unwrap_err();
+        assert!(matches!(err, ChatmailError::MessageTooLarge));
+        assert_eq!(mxdeliv_http_status(&err), StatusCode::PAYLOAD_TOO_LARGE);
+
+        handle_mxdeliv(&st, &headers, pgp).await.unwrap();
     }
 
     #[tokio::test]

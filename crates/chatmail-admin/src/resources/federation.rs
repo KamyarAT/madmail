@@ -21,8 +21,8 @@ use serde_json::{json, Value};
 use super::{status_storage::db_err, AdminResult};
 use crate::AdminState;
 use chatmail_db::{
-    federation_policy_label, get_bool_setting, set_federation_policy_label, set_setting,
-    settings_keys,
+    federation_policy_label, get_bool_setting, get_setting, set_federation_policy_label,
+    set_setting, settings_keys,
 };
 use chatmail_state::PolicyMode;
 
@@ -38,13 +38,22 @@ struct DomainBody {
 }
 
 async fn federation_settings_body(st: &AdminState) -> Result<Value, (u16, String)> {
+    use chatmail_config::format_data_size;
+
     let enabled = get_bool_setting(&st.pool, settings_keys::FEDERATION_ENABLED, false)
         .await
         .map_err(db_err)?;
     let policy = federation_policy_label(&st.pool).await.map_err(db_err)?;
+    let max_federation_size = get_setting(&st.pool, settings_keys::MAX_FEDERATION_SIZE)
+        .await
+        .map_err(db_err)?;
+    let federation_effective = st.app.federation_size.effective();
     Ok(json!({
         "enabled": enabled,
         "policy": policy,
+        "max_federation_size": max_federation_size,
+        "federation_size_effective": format_data_size(federation_effective),
+        "federation_size_effective_bytes": federation_effective,
     }))
 }
 

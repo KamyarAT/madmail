@@ -24,8 +24,11 @@ run_tests_py() {
 }
 
 INIT=0
+MINI=0
+MINI_ONLY=0
 DEPLOY_ARGS=()
 TEST_ARGS=()
+RELAYS=()
 TEST_FILTER=0
 
 while [[ $# -gt 0 ]]; do
@@ -34,12 +37,24 @@ while [[ $# -gt 0 ]]; do
 			INIT=1
 			shift
 			;;
+		--mini)
+			MINI=1
+			shift
+			;;
+		--mini-only)
+			MINI=1
+			MINI_ONLY=1
+			shift
+			;;
 		--simple)
 			TEST_ARGS=(--test-1 --test-2 --test-3 --test-4 --test-5 --test-6 --cool)
 			TEST_FILTER=1
 			shift
 			;;
 		--relay|--binary|--with-webadmin)
+			if [[ "$1" == "--relay" ]]; then
+				RELAYS+=("$2")
+			fi
 			DEPLOY_ARGS+=("$1" "$2")
 			shift 2
 			;;
@@ -107,6 +122,31 @@ chmod +x "$TESTS_DIR/bin/ssh"
 export PATH="$TESTS_DIR/bin:$PATH"
 export DELTACHAT_TEST_SSH_CONFIG="${DELTACHAT_TEST_SSH_CONFIG:-$HOME/.config/cmlxc/ssh-config}"
 export DELTACHAT_TEST_SSH_IDENTITY="${DELTACHAT_TEST_SSH_IDENTITY:-$HOME/.config/cmlxc/id_localchat}"
+
+run_mini_test() {
+	local relay1 relay2
+	if [[ ${#RELAYS[@]} -ge 2 ]]; then
+		relay1="${RELAYS[0]}"
+		relay2="${RELAYS[1]}"
+	elif [[ ${#RELAYS[@]} -eq 1 ]]; then
+		relay1="${RELAYS[0]}"
+		relay2="${RELAYS[0]}"
+	else
+		relay1=mad0
+		relay2=mad1
+	fi
+
+	echo "-- Running cmlxc test-mini against ${relay1} ${relay2}"
+	run_cmlxc test-mini "$relay1" "$relay2"
+}
+
+if [[ $MINI -eq 1 ]]; then
+	run_mini_test
+fi
+
+if [[ $MINI_ONLY -eq 1 ]]; then
+	exit 0
+fi
 
 echo "-- Running deltachat-test against REMOTE1=$REMOTE1 REMOTE2=$REMOTE2"
 cd "$DELTACHAT_TEST_DIR"

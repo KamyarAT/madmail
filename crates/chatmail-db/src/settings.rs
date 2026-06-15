@@ -204,7 +204,7 @@ pub async fn delete_setting(pool: &DbPool, key: &str) -> Result<()> {
 
 pub async fn seed_install_defaults(pool: &DbPool) -> Result<()> {
     use crate::settings_keys;
-    use chatmail_config::DEFAULT_MAX_MESSAGE_SIZE;
+    use chatmail_config::{DEFAULT_MAX_FEDERATION_SIZE, DEFAULT_MAX_MESSAGE_SIZE};
     seed_bool_if_unset(pool, settings_keys::JIT_REGISTRATION_ENABLED, true).await?;
     seed_bool_if_unset(pool, settings_keys::REGISTRATION_OPEN, true).await?;
     seed_string_if_unset(pool, settings_keys::APPENDLIMIT, DEFAULT_MAX_MESSAGE_SIZE).await?;
@@ -212,6 +212,12 @@ pub async fn seed_install_defaults(pool: &DbPool) -> Result<()> {
         pool,
         settings_keys::MAX_MESSAGE_SIZE,
         DEFAULT_MAX_MESSAGE_SIZE,
+    )
+    .await?;
+    seed_string_if_unset(
+        pool,
+        settings_keys::MAX_FEDERATION_SIZE,
+        DEFAULT_MAX_FEDERATION_SIZE,
     )
     .await?;
     seed_string_if_unset(pool, settings_keys::PUSH_MODE, "off").await?;

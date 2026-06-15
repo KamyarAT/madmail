@@ -27,6 +27,7 @@ Sample keys:
 | `__MESSAGE_RETENTION_ENABLED__` | admin settings | Hourly maildir purge toggle |
 | `__MESSAGE_RETENTION__` | admin settings | Duration (`30d`, `720h`, …) |
 | `__APPENDLIMIT__` / `__MAX_MESSAGE_SIZE__` | [`message-size`](../guide/cli/message-size.md) | Effective cap (min of both) |
+| `__MAX_FEDERATION_SIZE__` | `/admin/federation-size`, `/admin/settings/max_federation_size` | `/mxdeliv` HTTP body cap (default `70M`) |
 | `__PUSH_MODE__` | [`push`](../guide/cli/push.md) | `auto` / `on` / `off` (default `off`) |
 | `__WEBIMAP_ENABLED__` / `__WEBSMTP_ENABLED__` | [`webimap`](../guide/cli/webimap.md) | HTTP mail APIs |
 | `__SMTP_PORT__`, … | [`port`](../guide/cli/port.md) | Listener overrides |
