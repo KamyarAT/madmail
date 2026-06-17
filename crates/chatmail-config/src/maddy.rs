@@ -319,6 +319,16 @@ fn apply_directive(name: &str, args: &[String], block_path: &[&str], cfg: &mut A
                 cfg.turn_enable = true;
             }
             "relay_ip" if has_value => cfg.turn_relay_ip = Some(strip_quotes(&value)),
+            "relay_port_min" if has_value => {
+                if let Ok(n) = value.parse::<u16>() {
+                    cfg.turn_relay_port_min = n;
+                }
+            }
+            "relay_port_max" if has_value => {
+                if let Ok(n) = value.parse::<u16>() {
+                    cfg.turn_relay_port_max = n;
+                }
+            }
             "debug" => cfg.turn_debug = parse_bool(arg0),
             "test_force_relay" => cfg.turn_test_force_relay = parse_bool(arg0),
             _ => {}
@@ -718,6 +728,8 @@ turn {
     realm example.org
     secret s3cr3t
     relay_ip 203.0.113.10
+    relay_port_min 50000
+    relay_port_max 50100
 }
 "#,
         )
@@ -729,6 +741,8 @@ turn {
         assert_eq!(cfg.turn_ttl, 86400);
         assert_eq!(cfg.turn_realm.as_deref(), Some("example.org"));
         assert_eq!(cfg.turn_relay_ip.as_deref(), Some("203.0.113.10"));
+        assert_eq!(cfg.turn_relay_port_min, 50000);
+        assert_eq!(cfg.turn_relay_port_max, 50100);
     }
 
     #[test]

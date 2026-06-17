@@ -63,7 +63,7 @@ COPY assets/madmail.conf.docker /etc/madmail/madmail.conf
 COPY --from=build-env /madmail/target/release/madmail /bin/madmail
 COPY --from=build-env /madmail/crates/chatmail-iroh/assets/iroh-relay /bin/iroh-relay
 
-EXPOSE 25 143 993 587 465 8080
+EXPOSE 25 143 993 587 465 8080 3478/udp
 VOLUME ["/var/lib/madmail", "/etc/madmail", "/run/madmail"]
 ENTRYPOINT ["/bin/madmail", "--config", "/etc/madmail/madmail.conf"]
 CMD ["run", "--libexec", "/var/lib/madmail"]

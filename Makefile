@@ -4,8 +4,8 @@
 # Deploy: `make push` builds release chatmail, scp's to test servers, replaces binary, restarts systemd (no signing).
 
 .PHONY: all init build build-admin-web build-chatmail-embed build-chatmail-embed-release build-with-admin-web build-release build-profiling build-release-static build-workspace build-all build-landing preview-landing \
-	test test-unit test-integration test-e2e test-maintenance test-imap test-turn test-core-turn test-deltachat test-deltachat-cmlxc test-mini-cmlxc test-full-cmlxc test-cmlxc-fullrun test-cmlxc-fullrun-madmail _test-cmlxc-prereqs test-dclogin relay-ping-build relay-ping-clean t1-bench t1-report-demo \
-	check vet lint fmt fmt-check run run-bg run-debug restart stop logs reset-db dev-certs clean help \
+	test test-unit test-integration test-e2e test-maintenance test-imap test-turn test-docker-turn-e2e test-core-turn test-deltachat test-deltachat-cmlxc test-mini-cmlxc test-full-cmlxc test-cmlxc-fullrun test-cmlxc-fullrun-madmail _test-cmlxc-prereqs test-dclogin relay-ping-build relay-ping-clean t1-bench t1-report-demo \
+	check vet lint fmt fmt-check cov run run-bg run-debug restart stop logs reset-db dev-certs clean help \
 	sign push push1 push2 log1 log2 push-signed publish init-publish build-publish \
 	man man-lint man-check
 
@@ -195,6 +195,14 @@ fmt:
 fmt-check:
 	cargo fmt --all -- --check
 
+# Library unit-test coverage (requires cargo-llvm-cov). Opens HTML report in browser.
+cov:
+	@command -v cargo-llvm-cov >/dev/null || { \
+		echo "cargo-llvm-cov not found. Install with: cargo install cargo-llvm-cov"; \
+		exit 1; \
+	}
+	cargo llvm-cov --lib --open
+
 test-unit:
 	cargo test --workspace
 
@@ -224,6 +232,11 @@ test-turn:
 test-core-turn:
 	@test -x scripts/core-e2e-turn.sh || (echo "scripts/core-e2e-turn.sh missing (P9-S10)"; exit 1)
 	./scripts/core-e2e-turn.sh
+
+# Docker + relay-ping + TURN relay UDP allocate (see scripts/docker-turn-e2e.sh)
+test-docker-turn-e2e: relay-ping-build
+	@chmod +x scripts/docker-turn-e2e.sh
+	./scripts/docker-turn-e2e.sh
 
 # Delta Chat RPC E2E (deltachat-test) via cmlxc/Incus: deploy static madmail-v2 + run deltachat-test.
 # First time:  make test-deltachat-cmlxc DC_TEST_ARGS='--init'
@@ -467,8 +480,8 @@ help:
 	@echo "Run:       run, restart, dev-certs, dev-bind-cap (Linux <1024 ports), reset-db, install, preview-landing"
 	@echo "Admin UI:  edit $(ADMIN_WEB_DIR) → make build-with-admin-web → make restart"
 	@echo "Deploy:    push, push1 (unsigned), push2 (static+sign+upgrade), push-signed, sign (scripts/sign.sh), log1, log2 (scripts/deploy.sh)"
-	@echo "Test:      test, test-unit, test-e2e, test-maintenance, test-integration, test-imap, test-turn, test-full-cmlxc (madmail-v2), test-cmlxc-fullrun (cmdeploy+madmail-v2 fullrun), test-cmlxc-fullrun-madmail, test-deltachat-cmlxc, test-mini-cmlxc, test-dclogin"
-	@echo "Quality:   check, lint, fmt, fmt-check, man, man-lint, man-check"
+	@echo "Test:      test, test-unit, test-e2e, test-maintenance, test-integration, test-imap, test-turn, test-docker-turn-e2e, test-full-cmlxc (madmail-v2), test-cmlxc-fullrun (cmdeploy+madmail-v2 fullrun), test-cmlxc-fullrun-madmail, test-deltachat-cmlxc, test-mini-cmlxc, test-dclogin"
+	@echo "Quality:   check, lint, fmt, fmt-check, cov (unit-test coverage + browser), man, man-lint, man-check"
 	@echo "relay-ping: relay-ping-build (in $(RELAY_PING_DIR))"
 	@echo "Init:      init (download iroh-relay $(IROH_RELAY_VERSION) into $(IROH_ASSETS)/)"
 	@echo "Release:   build-publish, publish (PUBLISH_ARGS=…), init-publish (init + publish)"

@@ -71,3 +71,53 @@ fn port_from_listen(listen: Option<&str>) -> Option<String> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chatmail_config::{AppConfig, DbMailPorts};
+
+    #[test]
+    fn build_allowed_ports_uses_explicit_list_when_set() {
+        let file = AppConfig {
+            ss_allowed_ports: vec!["9999".into(), "8888".into()],
+            ..Default::default()
+        };
+        let ports = build_allowed_ports(&file, &DbMailPorts::default());
+        assert_eq!(ports.len(), 2);
+        assert!(ports.contains("9999"));
+        assert!(ports.contains("8888"));
+        assert!(!ports.contains("25"));
+    }
+
+    #[test]
+    fn build_allowed_ports_includes_defaults_and_listen_ports() {
+        let file = AppConfig {
+            smtp_listen: Some("0.0.0.0:2525".into()),
+            imap_tls_listen: Some("[::]:1993".into()),
+            iroh_port: 4242,
+            ..Default::default()
+        };
+        let db = DbMailPorts {
+            http_port: Some("8080".into()),
+            ..Default::default()
+        };
+        let ports = build_allowed_ports(&file, &db);
+        for expected in [
+            "3478", "5349", "25", "143", "465", "587", "993", "4242", "2525", "1993", "8080",
+        ] {
+            assert!(ports.contains(expected), "missing port {expected}");
+        }
+    }
+
+    #[test]
+    fn port_from_listen_extracts_numeric_suffix() {
+        assert_eq!(
+            port_from_listen(Some("0.0.0.0:587")),
+            Some("587".to_string())
+        );
+        assert_eq!(port_from_listen(Some("  ")), None);
+        assert_eq!(port_from_listen(Some("host:name")), None);
+        assert_eq!(port_from_listen(None), None);
+    }
+}

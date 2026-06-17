@@ -30,6 +30,7 @@ mod madmail_parse;
 pub mod parse;
 pub mod paths;
 pub mod queue;
+pub mod turn_relay_ports;
 
 pub use config_autocert::update_config_autocert;
 pub use config_www::update_config_www_dir;
@@ -39,8 +40,9 @@ use std::path::PathBuf;
 pub use autoconfig::{build_autoconfig_xml, AutoconfigParams};
 pub use cli::{
     AdminWebCommand, Args, Cli, Command, CompletionShell, EndpointCacheCommand, FederationCommand,
-    LanguageCommand, PortCommand, PortServiceCommand, PushCommand, RegistrationCommand,
-    RegistrationTokensCommand, ServiceToggleCommand, SharingCommand, TasksCommand, UninstallArgs,
+    LanguageCommand, PortCommand, PortServiceCommand, ProxyCommand, ProxySettingCommand,
+    PushCommand, RegistrationCommand, RegistrationTokensCommand, ServiceToggleCommand,
+    SharingCommand, TasksCommand, UninstallArgs,
 };
 pub use client_mail::{
     build_dclogin_link, client_connect_host, effective_http_listen, effective_http_plain_listen,
@@ -166,6 +168,9 @@ pub struct AppConfig {
     pub turn_listen_tcp: Option<String>,
     pub turn_realm: Option<String>,
     pub turn_relay_ip: Option<String>,
+    /// TURN relay UDP port range (`0` = default 49152–65535).
+    pub turn_relay_port_min: u16,
+    pub turn_relay_port_max: u16,
     /// Verbose turn-rs logs (`turn { debug }` or `CHATMAIL_TURN_DEBUG=1`).
     pub turn_debug: bool,
     /// Fake STUN mapped IP in Binding responses; real relay (see `turn-test.md`).
@@ -267,6 +272,14 @@ impl AppConfig {
     /// Whether TURN discovery + relay are configured in static config.
     pub fn turn_configured(&self) -> bool {
         self.turn_enable && self.turn_secret.as_ref().is_some_and(|s| !s.is_empty())
+    }
+
+    /// Effective TURN relay port range from static config (`0` = RFC default).
+    pub fn effective_turn_relay_port_range(&self) -> turn_relay_ports::TurnRelayPortRange {
+        turn_relay_ports::TurnRelayPortRange::resolve(
+            self.turn_relay_port_min,
+            self.turn_relay_port_max,
+        )
     }
 
     /// Whether Iroh relay + IMAP discovery are configured in static config.
@@ -373,5 +386,25 @@ mod tests {
         let cli = PathBuf::from("/tmp/cli-state");
         let cfg = AppConfig::default();
         assert_eq!(resolve_state_dir(cli.clone(), &cfg), cli);
+    }
+
+    #[test]
+    fn effective_turn_relay_port_range_from_file_config() {
+        let cfg = AppConfig {
+            turn_relay_port_min: 50_000,
+            turn_relay_port_max: 50_100,
+            ..Default::default()
+        };
+        let r = cfg.effective_turn_relay_port_range();
+        assert_eq!(r.min, 50_000);
+        assert_eq!(r.max, 50_100);
+    }
+
+    #[test]
+    fn effective_turn_relay_port_range_zero_uses_defaults() {
+        let cfg = AppConfig::default();
+        let r = cfg.effective_turn_relay_port_range();
+        assert_eq!(r.min, 49152);
+        assert_eq!(r.max, 65535);
     }
 }

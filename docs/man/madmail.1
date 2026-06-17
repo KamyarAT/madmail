@@ -5,7 +5,7 @@
 .nh
 .ad l
 .\" Begin generated content:
-.TH "madmail" "1" "2026-06-11" "2.4.0" "User Commands"
+.TH "madmail" "1" "2026-06-17" "2.9.0" "User Commands"
 .PP
 .SH NAME
 .PP
@@ -199,6 +199,15 @@ SMTP submission access scope (public or local).\&
 \fBpush\fR
 .RS 4
 Delta Chat push notification mode (\fBauto\fR, \fBon\fR, \fBoff\fR).\&
+.PP
+.RE
+\fBproxy\fR (\fBpr\fR)
+.RS 4
+Shadowsocks circumvention proxy (\fBstatus\fR, \fBenable\fR, \fBdisable\fR,
+\fBcipher\fR, \fBpassword\fR).\&
+Requires \fBss_addr\fR and \fBss_password\fR in the configuration file.\&
+Port overrides use \fBport shadowsocks\fR.\&
+Run \fBreload\fR after changes to apply to a running server.\&
 .PP
 .RE
 \fBwebimap\fR, \fBwebsmtp\fR
@@ -405,6 +414,14 @@ Install bash completion without a full system install:
 .PP
 .RS 4
 madmail completion bash | sudo tee /usr/share/bash-completion/completions/madmail
+.PP
+.RE
+Enable Shadowsocks and show the client URL:
+.PP
+.RS 4
+madmail proxy enable
+madmail proxy status
+madmail reload
 .PP
 .RE
 .SH NOTES

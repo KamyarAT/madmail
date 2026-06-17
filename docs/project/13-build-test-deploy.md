@@ -34,6 +34,7 @@ The static build is the one you usually `scp` to production servers.
 - `make test-unit`, `make test`
 - `make test-e2e` — integration tests (builds first)
 - `make test-turn`, `make test-imap`, `make test-maintenance`
+- `make test-docker-turn-e2e` — build Docker image, run `relay-ping` connectivity + TURN UDP allocate probe (requires Docker, Go for relay-ping; see `scripts/docker-turn-e2e.sh`)
 - `make test-deltachat` — full Delta Chat core E2E via incus + cmlxc (heavy; closest to real client behaviour)
 - `make test-dclogin` — relay-ping against two real accounts (requires DCLOGIN1/2 in .env)
 
@@ -79,8 +80,9 @@ This is the artifact that gets signed and `scp`'d in production deploys.
 1. **Unit** — inside each crate (`cargo test -p chatmail-foo`)
 2. **Integration** — `tests/` workspace member (boots real servers, speaks SMTP/IMAP, exercises ctl)
 3. **E2E with Delta Chat** — `make test-deltachat` (real Delta Chat desktop + core clients against the Rust server in Incus VMs)
-4. **Throughput (T1)** — special benchmark comparing madmail (Go) vs madmailv2 (Rust) under load
-5. **Manual / relay-ping** — `make test-dclogin` against two real accounts on test servers
+4. **Docker TURN E2E** — `make test-docker-turn-e2e` (local image + relay-ping + configurable relay UDP ports through published mappings)
+5. **Throughput (T1)** — special benchmark comparing madmail (Go) vs madmailv2 (Rust) under load
+6. **Manual / relay-ping** — `make test-dclogin` against two real accounts on test servers
 
 The E2E suite is the main integration check for "does this still work like a chatmail server should?"
 

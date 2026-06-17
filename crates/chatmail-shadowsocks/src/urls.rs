@@ -202,3 +202,66 @@ fn v2ray_ng_grpc_json(
 }}"#
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::runtime::ShadowsocksRuntime;
+
+    fn sample_runtime(listen: &str, enabled: bool) -> ShadowsocksRuntime {
+        ShadowsocksRuntime {
+            listen_addr: listen.to_string(),
+            password: "secret-pass".to_string(),
+            cipher: "aes-128-gcm".to_string(),
+            mail_domain: "mail.example.org".to_string(),
+            public_ip: String::new(),
+            enabled,
+            ws_enabled: false,
+            grpc_enabled: false,
+            allowed_ports: HashSet::from(["25".into(), "993".into()]),
+            tls_cert_path: PathBuf::from("/tmp/cert.pem"),
+            tls_key_path: PathBuf::from("/tmp/key.pem"),
+        }
+    }
+
+    #[test]
+    fn build_returns_empty_when_unconfigured_or_disabled() {
+        let disabled = sample_runtime("0.0.0.0:8388", false);
+        assert!(ShadowsocksUrls::build(&disabled, "hint")
+            .shadowsocks_url
+            .is_empty());
+
+        let mut unconfigured = sample_runtime("", true);
+        unconfigured.password.clear();
+        assert!(ShadowsocksUrls::build(&unconfigured, "hint")
+            .shadowsocks_url
+            .is_empty());
+    }
+
+    #[test]
+    fn build_shadowsocks_url_uses_host_hint_for_wildcard_listen() {
+        let rt = sample_runtime("0.0.0.0:9000", true);
+        let urls = ShadowsocksUrls::build(&rt, "relay.example.org:443");
+        assert!(urls.shadowsocks_url.starts_with("ss://"));
+        assert!(urls.shadowsocks_url.contains("@relay.example.org:9000#"));
+        assert!(urls.ws_url.is_empty());
+        assert!(urls.grpc_url.is_empty());
+    }
+
+    #[test]
+    fn build_shadowsocks_url_uses_bound_address_when_specific() {
+        let rt = sample_runtime("10.0.0.5:8388", true);
+        let urls = ShadowsocksUrls::build(&rt, "ignored");
+        assert!(urls.shadowsocks_url.contains("@10.0.0.5:8388#"));
+    }
+
+    #[test]
+    fn ss_auth_segment_strips_base64_padding() {
+        let auth = ss_auth_segment("aes-128-gcm", "pw");
+        assert!(!auth.ends_with('='));
+        assert!(!auth.is_empty());
+    }
+}

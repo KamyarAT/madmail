@@ -380,3 +380,323 @@ fn generate_token_string() -> Result<String, String> {
         .map(|x| CHARSET[(*x as usize) % CHARSET.len()] as char)
         .collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use chatmail_config::AppConfig;
+    use chatmail_db::{
+        attach_registration_token, ensure_new_account_quota, init_memory_db, seed_install_defaults,
+    };
+    use chatmail_state::AppState;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::AdminState;
+
+    fn fixed_now(secs: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    async fn test_admin_state() -> (AdminState, TempDir) {
+        let pool = init_memory_db().await.unwrap();
+        seed_install_defaults(&pool).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_quota_and_message_limit(
+            dir.path(),
+            chatmail_config::DEFAULT_QUOTA_BYTES,
+            &AppConfig::default(),
+            pool.clone(),
+        ));
+        app.hydrate(&pool, &AppConfig::default()).await.unwrap();
+        let st = AdminState::new(
+            pool,
+            app,
+            AppConfig::default(),
+            dir.path().to_path_buf(),
+            "example.org".into(),
+            "secret-token-01234567890123456789012345678901".into(),
+            None,
+        );
+        (st, dir)
+    }
+
+    #[test]
+    fn token_status_active_when_uses_remain() {
+        let now = fixed_now(1_700_000_000);
+        assert_eq!(token_status(5, 2, 1, None, now), "active");
+    }
+
+    #[test]
+    fn token_status_exhausted_when_used_count_reaches_max() {
+        let now = fixed_now(1_700_000_000);
+        assert_eq!(token_status(3, 3, 0, None, now), "exhausted");
+    }
+
+    #[test]
+    fn token_status_exhausted_when_used_plus_pending_reaches_max() {
+        let now = fixed_now(1_700_000_000);
+        assert_eq!(token_status(2, 1, 1, None, now), "exhausted");
+    }
+
+    #[test]
+    fn token_status_expired_takes_precedence() {
+        let now = fixed_now(1_700_000_000);
+        assert_eq!(
+            token_status(10, 0, 0, Some("1970-01-01T00:00:00Z"), now),
+            "expired"
+        );
+    }
+
+    #[test]
+    fn parse_sqlite_timestamp_accepts_rfc3339_and_sqlite_format() {
+        assert!(parse_sqlite_timestamp("2020-01-01T00:00:00Z").is_some());
+        assert!(parse_sqlite_timestamp("2020-01-01 00:00:00").is_some());
+        assert!(parse_sqlite_timestamp("").is_none());
+    }
+
+    #[test]
+    fn parse_duration_units_and_bare_seconds() {
+        assert_eq!(parse_duration("2h").unwrap(), Duration::from_secs(7200));
+        assert_eq!(parse_duration("30m").unwrap(), Duration::from_secs(1800));
+        assert_eq!(parse_duration("90s").unwrap(), Duration::from_secs(90));
+        assert_eq!(parse_duration("45").unwrap(), Duration::from_secs(45));
+        assert!(parse_duration("bad").is_err());
+    }
+
+    #[test]
+    fn resolve_expires_at_prefers_explicit_expires_at() {
+        let req = TokenCreateRequest {
+            token: String::new(),
+            max_uses: 0,
+            comment: String::new(),
+            expires_in: "1h".into(),
+            expires_at: Some(" 2030-06-01T12:00:00Z ".into()),
+        };
+        assert_eq!(
+            resolve_expires_at(&req).unwrap().as_deref(),
+            Some("2030-06-01T12:00:00Z")
+        );
+    }
+
+    #[test]
+    fn resolve_expires_at_blank_expires_at_is_none() {
+        let req = TokenCreateRequest {
+            token: String::new(),
+            max_uses: 0,
+            comment: String::new(),
+            expires_in: String::new(),
+            expires_at: Some("   ".into()),
+        };
+        assert!(resolve_expires_at(&req).unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_expires_at_from_expires_in() {
+        let req = TokenCreateRequest {
+            token: String::new(),
+            max_uses: 0,
+            comment: String::new(),
+            expires_in: "3600".into(),
+            expires_at: None,
+        };
+        let exp = resolve_expires_at(&req).unwrap().expect("expires_at set");
+        assert!(parse_sqlite_timestamp(&exp).is_some());
+    }
+
+    #[test]
+    fn generate_token_string_length_and_charset() {
+        let token = generate_token_string().unwrap();
+        assert_eq!(token.len(), 24);
+        assert!(token.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn token_json_shape() {
+        let v = token_json(
+            "abc",
+            3,
+            1,
+            2,
+            "note",
+            Some("2020-01-01T00:00:00Z"),
+            Some("2030-01-01T00:00:00Z"),
+            "active",
+        );
+        assert_eq!(v["token"], "abc");
+        assert_eq!(v["max_uses"], 3);
+        assert_eq!(v["used_count"], 1);
+        assert_eq!(v["pending_reservations"], 2);
+        assert_eq!(v["comment"], "note");
+        assert_eq!(v["status"], "active");
+    }
+
+    #[tokio::test]
+    async fn list_tokens_empty() {
+        let (st, _dir) = test_admin_state().await;
+        let (status, body) = registration_token(&st, "GET", &json!({})).await.unwrap();
+        assert_eq!(status, 200);
+        let body = body.unwrap();
+        assert_eq!(body["total"], 0);
+        assert!(body["tokens"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_and_list_token() {
+        let (st, _dir) = test_admin_state().await;
+        let (status, body) = registration_token(
+            &st,
+            "POST",
+            &json!({
+                "token": "invite-test",
+                "max_uses": 5,
+                "comment": "test invite"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, 201);
+        let body = body.unwrap();
+        assert_eq!(body["token"], "invite-test");
+        assert_eq!(body["max_uses"], 5);
+        assert_eq!(body["used_count"], 0);
+        assert_eq!(body["comment"], "test invite");
+        assert_eq!(body["status"], "active");
+
+        let (status, body) = registration_token(&st, "GET", &json!({})).await.unwrap();
+        assert_eq!(status, 200);
+        let tokens = body.unwrap()["tokens"].as_array().unwrap().clone();
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0]["token"], "invite-test");
+        assert_eq!(tokens[0]["pending_reservations"], 0);
+    }
+
+    #[tokio::test]
+    async fn create_generates_token_when_blank() {
+        let (st, _dir) = test_admin_state().await;
+        let (status, body) =
+            registration_token(&st, "POST", &json!({ "max_uses": 2, "comment": "auto" }))
+                .await
+                .unwrap();
+        assert_eq!(status, 201);
+        let body = body.unwrap();
+        let token = body["token"].as_str().unwrap();
+        assert_eq!(token.len(), 24);
+        assert!(token.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[tokio::test]
+    async fn create_clamps_non_positive_max_uses_to_one() {
+        let (st, _dir) = test_admin_state().await;
+        let (status, body) = registration_token(
+            &st,
+            "POST",
+            &json!({ "token": "single-use", "max_uses": 0 }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, 201);
+        assert_eq!(body.unwrap()["max_uses"], 1);
+    }
+
+    #[tokio::test]
+    async fn update_existing_token_preserves_used_count() {
+        let (st, _dir) = test_admin_state().await;
+        registration_token(
+            &st,
+            "POST",
+            &json!({ "token": "upd", "max_uses": 2, "comment": "v1" }),
+        )
+        .await
+        .unwrap();
+
+        db_execute!(
+            &st.pool,
+            "UPDATE registration_tokens SET used_count = 1 WHERE token = ?",
+            "upd"
+        )
+        .unwrap();
+
+        let (status, body) = registration_token(
+            &st,
+            "POST",
+            &json!({ "token": "upd", "max_uses": 10, "comment": "v2" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, 200);
+        let body = body.unwrap();
+        assert_eq!(body["max_uses"], 10);
+        assert_eq!(body["used_count"], 1);
+        assert_eq!(body["comment"], "v2");
+    }
+
+    #[tokio::test]
+    async fn list_shows_pending_reservations_and_exhausted_status() {
+        let (st, _dir) = test_admin_state().await;
+        registration_token(&st, "POST", &json!({ "token": "pending", "max_uses": 2 }))
+            .await
+            .unwrap();
+
+        ensure_new_account_quota(&st.pool, "alice@example.org")
+            .await
+            .unwrap();
+        attach_registration_token(&st.pool, "alice@example.org", "pending")
+            .await
+            .unwrap();
+
+        db_execute!(
+            &st.pool,
+            "UPDATE registration_tokens SET used_count = 1 WHERE token = ?",
+            "pending"
+        )
+        .unwrap();
+
+        let (_, body) = registration_token(&st, "GET", &json!({})).await.unwrap();
+        let entry = &body.unwrap()["tokens"][0];
+        assert_eq!(entry["pending_reservations"], 1);
+        assert_eq!(entry["status"], "exhausted");
+    }
+
+    #[tokio::test]
+    async fn delete_token_success_and_not_found() {
+        let (st, _dir) = test_admin_state().await;
+        registration_token(&st, "POST", &json!({ "token": "gone", "max_uses": 1 }))
+            .await
+            .unwrap();
+
+        let (status, body) = registration_token(&st, "DELETE", &json!({ "token": "gone" }))
+            .await
+            .unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body.unwrap()["deleted"], "gone");
+
+        let err = registration_token(&st, "DELETE", &json!({ "token": "gone" }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, 404);
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_empty_token() {
+        let (st, _dir) = test_admin_state().await;
+        let err = registration_token(&st, "DELETE", &json!({ "token": "" }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, 400);
+        assert!(err.1.contains("token is required"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_method_returns_405() {
+        let (st, _dir) = test_admin_state().await;
+        let err = registration_token(&st, "PATCH", &json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, 405);
+        assert!(err.1.contains("PATCH"));
+    }
+}

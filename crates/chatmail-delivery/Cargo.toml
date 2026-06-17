@@ -16,10 +16,16 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 sqlx = { workspace = true }
+rustls = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "net", "io-util", "time"] }
+tokio-rustls = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+chatmail-db = { workspace = true }
+chatmail-smtp = { path = "../chatmail-smtp" }
+chatmail-state = { workspace = true }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

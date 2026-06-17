@@ -60,3 +60,42 @@ impl QueueSettings {
             .unwrap_or_else(|| state_dir.join("remote_queue"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_matches_madmail_queue_defaults() {
+        let d = QueueSettings::default();
+        assert_eq!(d.location, None);
+        assert_eq!(d.max_tries, 3);
+        assert_eq!(d.max_parallelism, 16);
+        assert_eq!(d.initial_retry_secs, 60);
+        assert!((d.retry_time_scale - 1.25).abs() < f64::EPSILON);
+        assert_eq!(d.post_init_delay_secs, 10);
+        assert_eq!(d.max_delivery_secs, 600);
+    }
+
+    #[test]
+    fn effective_location_defaults_under_state_dir() {
+        let settings = QueueSettings::default();
+        let state = std::path::Path::new("/var/lib/chatmail");
+        assert_eq!(
+            settings.effective_location(state),
+            PathBuf::from("/var/lib/chatmail/remote_queue")
+        );
+    }
+
+    #[test]
+    fn effective_location_honors_custom_path() {
+        let settings = QueueSettings {
+            location: Some(PathBuf::from("/custom/queue")),
+            ..QueueSettings::default()
+        };
+        assert_eq!(
+            settings.effective_location(std::path::Path::new("/ignored")),
+            PathBuf::from("/custom/queue")
+        );
+    }
+}

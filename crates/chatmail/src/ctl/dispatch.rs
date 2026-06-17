@@ -22,7 +22,7 @@ use chatmail_db::settings_keys;
 
 use super::{
     accounts, admin_token, admin_web, blocklist_cmd, certificate, delete_cmd, docs, endpoint_cache,
-    federation, html, install, language, message_size, port, push, registration,
+    federation, html, install, language, message_size, port, proxy, push, registration,
     registration_tokens, reload, service_toggle, sharing, status_cmd, tasks, uninstall, version,
 };
 
@@ -80,6 +80,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
             .await
         }
         Some(Command::Push(cmd)) => push::push(&cli.args, cmd).await,
+        Some(Command::Proxy { cmd }) => proxy::proxy(&cli.args, cmd.as_ref()).await,
         Some(Command::Federation(cmd)) => federation::federation(&cli.args, cmd).await,
         Some(Command::RegistrationTokens(cmd)) => {
             registration_tokens::registration_tokens(&cli.args, cmd).await
@@ -108,7 +109,7 @@ fn not_implemented(cmd: &Command) -> Result<()> {
          Implemented: run, upgrade, update, version, admin-token, admin-web, install, certificate, \
          accounts, ban-list, blocklist, create-user, delete, registration, language, \
          html-export, html-serve, webimap, websmtp, push, federation, registration-tokens, sharing, \
-         status, uninstall, endpoint-cache, port, reload, message-size, tasks, completion"
+         status, uninstall, endpoint-cache, port, proxy, reload, message-size, tasks, completion"
     )))
 }
 
@@ -151,6 +152,7 @@ fn command_name(cmd: &Command) -> &'static str {
         Command::Webimap { .. } => "webimap",
         Command::Websmtp { .. } => "websmtp",
         Command::Push { .. } => "push",
+        Command::Proxy { .. } => "proxy",
         Command::MessageSize { .. } => "message-size",
         Command::Tasks { .. } => "tasks",
         Command::Completion { .. } => "completion",

@@ -19,7 +19,8 @@
 
 use chatmail_config::cli::{
     EndpointCacheCommand, FederationCommand, LanguageCommand, PortCommand, PortServiceCommand,
-    RegistrationCommand, RegistrationTokensCommand, ServiceToggleCommand, SharingCommand,
+    ProxyCommand, ProxySettingCommand, RegistrationCommand, RegistrationTokensCommand,
+    ServiceToggleCommand, SharingCommand,
 };
 use chatmail_config::{Cli, Command};
 use chatmail_db::{
@@ -29,7 +30,7 @@ use chatmail_db::{
 use clap::Parser;
 
 use super::dispatch;
-use super::test_harness::{parse_cli, setup_ctl_env};
+use super::test_harness::{parse_cli, parse_cli_with_config, setup_ctl_env, write_ss_test_config};
 
 #[tokio::test]
 async fn dispatch_registration_open_close() {
@@ -219,6 +220,99 @@ async fn dispatch_sharing_create_and_remove() {
 }
 
 #[tokio::test]
+async fn dispatch_proxy_not_configured_status_and_enable_guard() {
+    let (dir, _args, _db, pool) = setup_ctl_env().await;
+
+    let cli = parse_cli(dir.path(), &["proxy", "status"]);
+    dispatch(&cli).await.unwrap();
+
+    let cli = parse_cli(dir.path(), &["proxy", "disable"]);
+    dispatch(&cli).await.unwrap();
+    assert!(
+        !get_bool_setting(&pool, settings_keys::SS_ENABLED, true)
+            .await
+            .unwrap()
+    );
+
+    let cli = parse_cli(dir.path(), &["proxy", "enable"]);
+    let err = dispatch(&cli).await.unwrap_err().to_string();
+    assert!(err.contains("not configured"));
+}
+
+#[tokio::test]
+async fn dispatch_proxy_configured_toggle_and_settings() {
+    let (dir, _args, _db, pool) = setup_ctl_env().await;
+    let config = write_ss_test_config(dir.path());
+
+    let cli = parse_cli_with_config(dir.path(), &config, &["proxy", "status"]);
+    dispatch(&cli).await.unwrap();
+
+    let cli = parse_cli_with_config(dir.path(), &config, &["proxy", "disable"]);
+    dispatch(&cli).await.unwrap();
+    assert!(
+        !get_bool_setting(&pool, settings_keys::SS_ENABLED, true)
+            .await
+            .unwrap()
+    );
+
+    let cli = parse_cli_with_config(dir.path(), &config, &["proxy", "enable"]);
+    dispatch(&cli).await.unwrap();
+    assert!(
+        get_bool_setting(&pool, settings_keys::SS_ENABLED, false)
+            .await
+            .unwrap()
+    );
+
+    let cli = parse_cli_with_config(
+        dir.path(),
+        &config,
+        &["proxy", "cipher", "set", "chacha20-ietf-poly1305"],
+    );
+    dispatch(&cli).await.unwrap();
+    assert_eq!(
+        get_setting(&pool, settings_keys::SS_CIPHER)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("chacha20-ietf-poly1305")
+    );
+
+    let cli = parse_cli_with_config(dir.path(), &config, &["proxy", "cipher", "reset"]);
+    dispatch(&cli).await.unwrap();
+    assert!(get_setting(&pool, settings_keys::SS_CIPHER)
+        .await
+        .unwrap()
+        .is_none());
+
+    let cli = parse_cli_with_config(dir.path(), &config, &["proxy", "password", "set", "new-pass"]);
+    dispatch(&cli).await.unwrap();
+    assert_eq!(
+        get_setting(&pool, settings_keys::SS_PASSWORD)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("new-pass")
+    );
+
+    let cli = parse_cli_with_config(dir.path(), &config, &["proxy", "password", "reset"]);
+    dispatch(&cli).await.unwrap();
+    assert!(get_setting(&pool, settings_keys::SS_PASSWORD)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn dispatch_proxy_cipher_rejects_invalid() {
+    let (dir, _args, _db, _pool) = setup_ctl_env().await;
+    let config = write_ss_test_config(dir.path());
+
+    let cli = parse_cli_with_config(dir.path(), &config, &["proxy", "cipher", "set", "rc4-md5"]);
+    let err = dispatch(&cli).await.unwrap_err().to_string();
+    assert!(err.contains("unsupported shadowsocks cipher"));
+}
+
+#[tokio::test]
 async fn dispatch_port_set_and_reset() {
     let (dir, _args, _db, pool) = setup_ctl_env().await;
 
@@ -367,5 +461,42 @@ fn cli_language_and_registration_parse() {
     assert!(matches!(
         cli.command,
         Some(Command::Reload { insecure: true, .. })
+    ));
+
+    let cli = parse_cli(std::path::Path::new("/tmp"), &["proxy", "status"]);
+    assert!(matches!(
+        cli.command,
+        Some(Command::Proxy {
+            cmd: Some(ProxyCommand::Status)
+        })
+    ));
+
+    let cli = parse_cli(std::path::Path::new("/tmp"), &["proxy", "enable"]);
+    assert!(matches!(
+        cli.command,
+        Some(Command::Proxy {
+            cmd: Some(ProxyCommand::Enable)
+        })
+    ));
+
+    let cli = parse_cli(std::path::Path::new("/tmp"), &["pr", "status"]);
+    assert!(matches!(
+        cli.command,
+        Some(Command::Proxy {
+            cmd: Some(ProxyCommand::Status)
+        })
+    ));
+
+    let cli = parse_cli(
+        std::path::Path::new("/tmp"),
+        &["proxy", "cipher", "set", "aes-256-gcm"],
+    );
+    assert!(matches!(
+        cli.command,
+        Some(Command::Proxy {
+            cmd: Some(ProxyCommand::Cipher {
+                cmd: Some(ProxySettingCommand::Set { value })
+            })
+        }) if value == "aes-256-gcm"
     ));
 }

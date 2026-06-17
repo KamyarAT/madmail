@@ -140,6 +140,8 @@ fn toml_to_app_config(content: &str) -> Result<AppConfig> {
         turn_listen_tcp: None,
         turn_realm: parsed.turn_realm,
         turn_relay_ip: None,
+        turn_relay_port_min: 0,
+        turn_relay_port_max: 0,
         turn_debug: false,
         turn_test_force_relay: false,
         iroh_relay_url: None,

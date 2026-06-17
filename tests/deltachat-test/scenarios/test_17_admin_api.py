@@ -671,6 +671,8 @@ def run(dc, remote, test_dir=None):
         ("/admin/settings/turn_realm", "__TURN_REALM__", "test.realm.org"),
         ("/admin/settings/turn_secret", "__TURN_SECRET__", "e2e-test-secret-42"),
         ("/admin/settings/turn_relay_ip", "__TURN_RELAY_IP__", "192.168.99.1"),
+        ("/admin/settings/turn_relay_port_min", "__TURN_RELAY_PORT_MIN__", "50000"),
+        ("/admin/settings/turn_relay_port_max", "__TURN_RELAY_PORT_MAX__", "50100"),
         ("/admin/settings/turn_ttl", "__TURN_TTL__", "7200"),
         ("/admin/settings/iroh_relay_url", "__IROH_RELAY_URL__", "https://iroh.test.example.com"),
         ("/admin/settings/ss_cipher", "__SS_CIPHER__", "aes-256-gcm"),
@@ -755,7 +757,8 @@ def run(dc, remote, test_dir=None):
     # Check other port/config keys exist (may or may not be set)
     for field in ["submission_port", "submission_tls_port", "imap_port", "turn_port",
                   "iroh_port", "ss_port", "smtp_hostname", "turn_realm",
-                  "turn_secret", "turn_relay_ip", "turn_ttl", "iroh_relay_url",
+                  "turn_secret", "turn_relay_ip", "turn_relay_port_min",
+                  "turn_relay_port_max", "turn_ttl", "iroh_relay_url",
                   "ss_cipher", "ss_password"]:
         assert field in body, f"  ✗ Missing '{field}' in bulk response"
     print("  ✓ All setting keys present in bulk response")

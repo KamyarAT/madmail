@@ -31,6 +31,8 @@ serde_json = { workspace = true }
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "net", "time"] }
 tokio-util = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
 
 [[test]]
 name = "securejoin_e2e"
@@ -47,6 +49,10 @@ path = "deltachat_p2p_e2e.rs"
 [[test]]
 name = "turn_e2e"
 path = "turn_e2e.rs"
+
+[[test]]
+name = "docker_turn_e2e"
+path = "docker_turn_e2e.rs"
 
 [[test]]
 name = "ctl_cli_e2e"

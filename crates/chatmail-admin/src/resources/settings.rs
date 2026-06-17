@@ -22,7 +22,9 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use chatmail_config::{format_data_size, parse_duration};
+use chatmail_config::{
+    format_data_size, parse_duration, turn_relay_ports::TurnRelayPortRange, AppConfig,
+};
 use chatmail_db::{
     delete_setting, format_retention_days, get_bool_setting, get_setting, set_setting,
     settings_keys, DbPool, DEFAULT_RETENTION_DAYS,
@@ -256,6 +258,27 @@ pub async fn all_settings(st: &AdminState, method: &str) -> AdminResult {
         "turn_relay_ip",
         setting_value(pool, settings_keys::TURN_RELAY_IP, "").await?,
     );
+    let file_relay = st.file_config.effective_turn_relay_port_range();
+    insert_setting(
+        &mut body,
+        "turn_relay_port_min",
+        setting_value(
+            pool,
+            settings_keys::TURN_RELAY_PORT_MIN,
+            &file_relay.min.to_string(),
+        )
+        .await?,
+    );
+    insert_setting(
+        &mut body,
+        "turn_relay_port_max",
+        setting_value(
+            pool,
+            settings_keys::TURN_RELAY_PORT_MAX,
+            &file_relay.max.to_string(),
+        )
+        .await?,
+    );
     insert_setting(
         &mut body,
         "turn_ttl",
@@ -471,6 +494,8 @@ fn named_routes() -> HashMap<&'static str, NamedRoute> {
         ("turn_realm", k::TURN_REALM),
         ("turn_secret", k::TURN_SECRET),
         ("turn_relay_ip", k::TURN_RELAY_IP),
+        ("turn_relay_port_min", k::TURN_RELAY_PORT_MIN),
+        ("turn_relay_port_max", k::TURN_RELAY_PORT_MAX),
         ("turn_ttl", k::TURN_TTL),
         ("iroh_relay_url", k::IROH_RELAY_URL),
         ("http_proxy_path", k::HTTP_PROXY_PATH),
@@ -570,6 +595,7 @@ pub(crate) async fn generic_setting(
                         .map_err(db_err)?;
                     }
                     validate_setting_value(db_key, &value)?;
+                    validate_turn_relay_port_setting(st, db_key, &value).await?;
                     set_setting(&st.pool, db_key, &value)
                         .await
                         .map_err(db_err)?;
@@ -666,7 +692,7 @@ fn validate_setting_value(key: &str, value: &str) -> Result<(), (u16, String)> {
         return Err((400, "value contains invalid characters".into()));
     }
 
-    if is_port_key(key) {
+    if is_port_key(key) || is_turn_relay_port_key(key) {
         let port: u16 = value
             .parse()
             .map_err(|_| (400, "invalid port number: must be 1-65535".into()))?;
@@ -728,6 +754,82 @@ fn validate_setting_value(key: &str, value: &str) -> Result<(), (u16, String)> {
     }
 
     Ok(())
+}
+
+fn is_turn_relay_port_key(key: &str) -> bool {
+    matches!(
+        key,
+        settings_keys::TURN_RELAY_PORT_MIN | settings_keys::TURN_RELAY_PORT_MAX
+    )
+}
+
+async fn validate_turn_relay_port_setting(
+    st: &AdminState,
+    db_key: &str,
+    value: &str,
+) -> Result<(), (u16, String)> {
+    if !is_turn_relay_port_key(db_key) {
+        return Ok(());
+    }
+    let new_port: u16 = value
+        .parse()
+        .map_err(|_| (400, "invalid port number: must be 1-65535".into()))?;
+    let (min, max) = turn_relay_bounds_for_validation(st, db_key, new_port).await?;
+    let range = TurnRelayPortRange::resolve(min, max);
+    let control = effective_turn_control_port(&st.pool, &st.file_config)
+        .await
+        .map_err(db_err)?;
+    range.validate(control).map_err(|e| (400, e))
+}
+
+async fn turn_relay_bounds_for_validation(
+    st: &AdminState,
+    db_key: &str,
+    new_port: u16,
+) -> Result<(u16, u16), (u16, String)> {
+    let file = st.file_config.effective_turn_relay_port_range();
+    let stored_min =
+        setting_port_or_default(&st.pool, settings_keys::TURN_RELAY_PORT_MIN, file.min).await?;
+    let stored_max =
+        setting_port_or_default(&st.pool, settings_keys::TURN_RELAY_PORT_MAX, file.max).await?;
+    Ok(if db_key == settings_keys::TURN_RELAY_PORT_MIN {
+        (new_port, stored_max)
+    } else {
+        (stored_min, new_port)
+    })
+}
+
+async fn setting_port_or_default(
+    pool: &DbPool,
+    key: &str,
+    default: u16,
+) -> Result<u16, (u16, String)> {
+    if let Ok(Some(v)) = get_setting(pool, key).await {
+        if let Ok(p) = v.trim().parse::<u16>() {
+            if p != 0 {
+                return Ok(p);
+            }
+        }
+    }
+    Ok(default)
+}
+
+async fn effective_turn_control_port(
+    pool: &DbPool,
+    file_config: &AppConfig,
+) -> Result<u16, String> {
+    if let Ok(Some(v)) = get_setting(pool, settings_keys::TURN_PORT).await {
+        if let Ok(p) = v.trim().parse::<u16>() {
+            if p != 0 {
+                return Ok(p);
+            }
+        }
+    }
+    Ok(if file_config.turn_port == 0 {
+        3478
+    } else {
+        file_config.turn_port
+    })
 }
 
 fn is_port_key(key: &str) -> bool {

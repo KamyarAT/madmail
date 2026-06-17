@@ -25,7 +25,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use tokio::net::UdpSocket;
 use turn::auth::LongTermAuthHandler;
-use turn::relay::relay_static::RelayAddressGeneratorStatic;
+use turn::relay::relay_range::RelayAddressGeneratorRanges;
 use turn::server::config::{ConnConfig, ServerConfig};
 use turn::server::Server;
 use webrtc_util::vnet::net::Net;
@@ -38,6 +38,9 @@ pub struct TurnSpawnOpts {
     /// Advertised via IMAP for Core `iceTransportPolicy: relay` (metadata only; webrtc turn
     /// still accepts STUN Binding on :3478).
     pub test_relay_only: bool,
+    /// Inclusive UDP port range for relay allocations (default 49152–65535).
+    pub relay_port_min: u16,
+    pub relay_port_max: u16,
 }
 
 impl Default for TurnSpawnOpts {
@@ -45,9 +48,16 @@ impl Default for TurnSpawnOpts {
         Self {
             debug: turn_debug_from_env(),
             test_relay_only: turn_force_relay_test_from_env(),
+            relay_port_min: DEFAULT_TURN_RELAY_PORT_MIN,
+            relay_port_max: DEFAULT_TURN_RELAY_PORT_MAX,
         }
     }
 }
+
+/// Default minimum relay port ([RFC 8656] dynamic range).
+pub const DEFAULT_TURN_RELAY_PORT_MIN: u16 = 49152;
+/// Default maximum relay port (inclusive).
+pub const DEFAULT_TURN_RELAY_PORT_MAX: u16 = 65535;
 
 impl TurnSpawnOpts {
     /// Options for unit tests (no extra port-range tuning needed).
@@ -55,6 +65,8 @@ impl TurnSpawnOpts {
         Self {
             debug: false,
             test_relay_only: false,
+            relay_port_min: DEFAULT_TURN_RELAY_PORT_MIN,
+            relay_port_max: DEFAULT_TURN_RELAY_PORT_MAX,
         }
     }
 }
@@ -109,7 +121,8 @@ pub async fn spawn_turn_server_with_opts(
     }
 
     let relay_ip = external.ip();
-    let conn_configs = build_conn_configs(listen, relay_ip).await?;
+    let relay_range = (opts.relay_port_min, opts.relay_port_max);
+    let conn_configs = build_conn_configs(listen, relay_ip, relay_range).await?;
     let n_ifaces = conn_configs.len();
 
     let auth_handler = Arc::new(LongTermAuthHandler::new(secret.to_string()));
@@ -129,8 +142,10 @@ pub async fn spawn_turn_server_with_opts(
         external = %external,
         realm = %realm,
         n_ifaces,
-        "TURN server started (webrtc turn; open UDP {} and relay ports 49152-65535)",
-        listen.port()
+        "TURN server started (webrtc turn; open UDP {} and relay ports {}-{})",
+        listen.port(),
+        opts.relay_port_min,
+        opts.relay_port_max
     );
 
     Ok(TurnServerHandle {
@@ -142,7 +157,11 @@ pub async fn spawn_turn_server_with_opts(
 }
 
 /// Bind addresses for TURN control (port 3478).
-async fn build_conn_configs(listen: SocketAddr, relay_ip: IpAddr) -> Result<Vec<ConnConfig>> {
+async fn build_conn_configs(
+    listen: SocketAddr,
+    relay_ip: IpAddr,
+    relay_range: (u16, u16),
+) -> Result<Vec<ConnConfig>> {
     let port = listen.port();
     let net = Arc::new(Net::new(None));
     let mut configs = Vec::new();
@@ -163,12 +182,21 @@ async fn build_conn_configs(listen: SocketAddr, relay_ip: IpAddr) -> Result<Vec<
                 .await
                 .with_context(|| format!("bind TURN UDP {bind_ip}:{port}"))?,
         );
-        tracing::debug!(%bind_ip, %port, %relay_ip, "TURN listening");
+        tracing::debug!(
+            %bind_ip,
+            %port,
+            %relay_ip,
+            relay_min = relay_range.0,
+            relay_max = relay_range.1,
+            "TURN listening"
+        );
         configs.push(ConnConfig {
             conn,
-            relay_addr_generator: Box::new(RelayAddressGeneratorStatic {
+            relay_addr_generator: Box::new(RelayAddressGeneratorRanges {
                 relay_address: relay_ip,
-                // Bind on the local interface; advertise `relay_ip` in XOR-RELAYED-ADDRESS.
+                min_port: relay_range.0,
+                max_port: relay_range.1,
+                max_retries: 0,
                 address: bind_ip.to_string(),
                 net: net.clone(),
             }),

@@ -41,3 +41,49 @@ pub async fn is_websmtp_enabled(pool: &DbPool) -> bool {
 pub fn service_disabled() -> Response {
     json_err(StatusCode::NOT_FOUND, "not found")
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+
+    use super::*;
+    use chatmail_db::{init_memory_db, set_setting, settings_keys};
+
+    #[tokio::test]
+    async fn webimap_disabled_by_default() {
+        let pool = init_memory_db().await.unwrap();
+        assert!(!is_webimap_enabled(&pool).await);
+    }
+
+    #[tokio::test]
+    async fn webimap_enabled_only_when_setting_true() {
+        let pool = init_memory_db().await.unwrap();
+        set_setting(&pool, settings_keys::WEBIMAP_ENABLED, "false")
+            .await
+            .unwrap();
+        assert!(!is_webimap_enabled(&pool).await);
+
+        set_setting(&pool, settings_keys::WEBIMAP_ENABLED, "true")
+            .await
+            .unwrap();
+        assert!(is_webimap_enabled(&pool).await);
+    }
+
+    #[tokio::test]
+    async fn websmtp_enabled_only_when_setting_true() {
+        let pool = init_memory_db().await.unwrap();
+        set_setting(&pool, settings_keys::WEBSMTP_ENABLED, "true")
+            .await
+            .unwrap();
+        assert!(is_websmtp_enabled(&pool).await);
+    }
+
+    #[tokio::test]
+    async fn service_disabled_returns_madmail_404_json() {
+        let resp = service_disabled();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body.as_ref(), br#"{"error":"not found"}"#);
+    }
+}

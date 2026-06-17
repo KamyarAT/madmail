@@ -205,6 +205,12 @@ pub enum Command {
     /// Delta Chat push notifications (`auto` / `on` / `off`).
     #[command(subcommand)]
     Push(PushCommand),
+    /// Manage Shadowsocks circumvention proxy (enable, cipher, password, client URL).
+    #[command(subcommand_required = false, visible_aliases = ["pr"])]
+    Proxy {
+        #[command(subcommand)]
+        cmd: Option<ProxyCommand>,
+    },
     /// Print shell tab-completion scripts (`bash`, `zsh`, `fish`).
     #[command(subcommand)]
     Completion(CompletionShell),
@@ -225,6 +231,43 @@ pub enum CompletionShell {
     Zsh,
     /// Fish completion script for `/usr/share/fish/vendor_completions.d/<binary>.fish`.
     Fish,
+}
+
+/// `madmail proxy` — Shadowsocks (`__SS_*__`).
+#[derive(Debug, Subcommand, Clone)]
+pub enum ProxyCommand {
+    /// Show Shadowsocks configuration and client URL.
+    Status,
+    /// Enable Shadowsocks listener (requires `ss_addr` + `ss_password` in config).
+    Enable,
+    /// Disable Shadowsocks listener.
+    Disable,
+    /// View or change cipher (`__SS_CIPHER__`).
+    #[command(subcommand_required = false)]
+    Cipher {
+        #[command(subcommand)]
+        cmd: Option<ProxySettingCommand>,
+    },
+    /// View or change password (`__SS_PASSWORD__`).
+    #[command(subcommand_required = false)]
+    Password {
+        #[command(subcommand)]
+        cmd: Option<ProxySettingCommand>,
+    },
+}
+
+/// `madmail proxy cipher` / `proxy password` — DB override set/reset.
+#[derive(Debug, Subcommand, Clone)]
+pub enum ProxySettingCommand {
+    /// Show effective value and DB override.
+    Status,
+    /// Set DB override.
+    Set {
+        #[arg(value_name = "VALUE")]
+        value: String,
+    },
+    /// Clear DB override (revert to config file).
+    Reset,
 }
 
 /// `madmail push` — `__PUSH_MODE__` (`auto` disables after repeated proxy failures).

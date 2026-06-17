@@ -267,6 +267,56 @@ mod tests {
     }
 
     #[test]
+    fn bash_completion_includes_proxy_subcommand() {
+        let script = bash_completion("madmail").unwrap();
+        assert!(
+            script.contains("proxy"),
+            "bash completion should list proxy subcommand"
+        );
+        assert!(
+            script.contains("pr"),
+            "bash completion should list proxy alias pr"
+        );
+    }
+
+    #[test]
+    fn bash_completion_prefix_pr_matches_proxy() {
+        let script = bash_completion("madmail").unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("madmail.bash");
+        std::fs::write(&path, &script).expect("write completion script");
+        let path_s = path.display();
+        let result = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(format!(
+                r#"
+source "{path_s}"
+COMP_WORDS=(madmail pr)
+COMP_CWORD=1
+_madmail madmail pr ""
+printf '%s\n' "${{COMPREPLY[@]}}"
+"#
+            ))
+            .output()
+            .expect("run bash completion test");
+        assert!(result.status.success(), "bash completion test failed");
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(
+            stdout.lines().any(|line| line == "proxy" || line == "pr"),
+            "madmail pr<TAB> should complete to proxy or pr, got: {stdout}"
+        );
+    }
+
+    #[test]
+    fn zsh_completion_includes_proxy_subcommand() {
+        let script = zsh_completion("madmail").unwrap();
+        assert!(
+            script.contains("proxy"),
+            "zsh completion should list proxy subcommand"
+        );
+    }
+
+    #[test]
     fn custom_binary_man_page_adapts_name_and_paths() {
         let man = man_roff("chatmail").unwrap();
         assert!(man.contains(r#".TH "chatmail" "1""#));

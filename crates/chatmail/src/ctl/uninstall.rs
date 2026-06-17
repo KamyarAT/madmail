@@ -560,3 +560,257 @@ fn append_log(path: &Path, msg: &str) -> Result<()> {
     writeln!(f, "[{ts}] {msg}").ok();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chatmail_config::Args;
+    use clap::Parser;
+
+    fn sample_flags(dry_run: bool, log_file: PathBuf) -> UninstallArgs {
+        UninstallArgs {
+            force: true,
+            keep_data: false,
+            keep_user: true,
+            keep_config: false,
+            keep_binary: false,
+            dry_run,
+            log_file,
+        }
+    }
+
+    fn ctl_context(state_dir: &Path) -> CtlContext {
+        let args =
+            Args::try_parse_from(["madmail", "--state-dir", state_dir.to_str().unwrap()]).unwrap();
+        CtlContext::from_args(&args).unwrap()
+    }
+
+    #[test]
+    fn is_family_unit_stem_matches_madmail_and_chatmail_variants() {
+        for stem in [
+            "madmail",
+            "chatmail",
+            "madmail-new",
+            "madmail_backup",
+            "chatmail-dev",
+            "chatmail_staging",
+        ] {
+            assert!(is_family_unit_stem(stem), "expected family stem: {stem}");
+        }
+        for stem in ["nginx", "madmailx", "postfix", "other-service"] {
+            assert!(!is_family_unit_stem(stem), "unexpected family stem: {stem}");
+        }
+    }
+
+    #[test]
+    fn discover_family_dirs_finds_madmail_and_chatmail_prefixes() {
+        let parent = tempfile::tempdir().unwrap();
+        fs::create_dir(parent.path().join("madmail")).unwrap();
+        fs::create_dir(parent.path().join("chatmail-dev")).unwrap();
+        fs::create_dir(parent.path().join("unrelated")).unwrap();
+
+        let dirs = discover_family_dirs(parent.path().to_str().unwrap(), &["madmail", "chatmail"]);
+        assert_eq!(dirs.len(), 2);
+        assert!(dirs.iter().any(|p| p.ends_with("madmail")));
+        assert!(dirs.iter().any(|p| p.ends_with("chatmail-dev")));
+    }
+
+    #[test]
+    fn discover_family_binaries_collects_family_executables() {
+        let bin = tempfile::tempdir().unwrap();
+        fs::write(bin.path().join("madmail"), b"").unwrap();
+        fs::write(bin.path().join("chatmail-helper"), b"").unwrap();
+        fs::write(bin.path().join("nginx"), b"").unwrap();
+
+        let mut paths = Vec::new();
+        discover_family_binaries(bin.path().to_str().unwrap(), &mut paths);
+        assert_eq!(paths.len(), 2);
+        assert!(paths.iter().any(|p| p.ends_with("madmail")));
+        assert!(paths.iter().any(|p| p.ends_with("chatmail-helper")));
+    }
+
+    #[test]
+    fn enrich_from_unit_file_extracts_user_workdir_and_execstart() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("madmail");
+        fs::write(&binary, b"").unwrap();
+        let unit = dir.path().join("madmail.service");
+        let unit_body = format!(
+            "[Service]\nUser=madmail\nWorkingDirectory={}\nExecStart={} run\n",
+            dir.path().display(),
+            binary.display()
+        );
+        fs::write(&unit, unit_body).unwrap();
+
+        let mut plan = UninstallPlan::default();
+        enrich_from_unit_file(&mut plan, &unit);
+
+        assert_eq!(plan.service_users, vec!["madmail".to_string()]);
+        assert!(plan.state_dirs.iter().any(|p| p == dir.path()));
+        assert!(plan.binary_paths.iter().any(|p| p == &binary));
+    }
+
+    #[test]
+    fn push_unique_helpers_deduplicate_entries() {
+        let mut paths = vec![PathBuf::from("/a")];
+        push_unique_path(&mut paths, PathBuf::from("/a"));
+        push_unique_path(&mut paths, PathBuf::from("/b"));
+        assert_eq!(paths, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
+
+        let mut names = vec!["madmail".to_string()];
+        push_unique_string(&mut names, "madmail".into());
+        push_unique_string(&mut names, "chatmail".into());
+        assert_eq!(names, vec!["madmail", "chatmail"]);
+    }
+
+    #[test]
+    fn remove_path_dry_run_leaves_files_and_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("keep.txt");
+        fs::write(&file, b"x").unwrap();
+
+        remove_path(&file, true).unwrap();
+        assert!(file.is_file());
+        remove_path(dir.path(), true).unwrap();
+        assert!(dir.path().is_dir());
+    }
+
+    #[test]
+    fn remove_path_deletes_file_and_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("gone.txt");
+        fs::write(&file, b"x").unwrap();
+        let nested = dir.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+
+        remove_path(&file, false).unwrap();
+        assert!(!file.exists());
+
+        remove_path(&nested, false).unwrap();
+        assert!(!nested.exists());
+    }
+
+    #[test]
+    fn run_systemctl_dry_run_does_not_invoke_systemctl() {
+        let plan = UninstallPlan {
+            service_names: vec!["madmail".into()],
+            ..Default::default()
+        };
+        let flags = sample_flags(true, PathBuf::from("/tmp/uninstall-test.log"));
+        stop_services(&plan, &flags).unwrap();
+        disable_services(&plan, &flags).unwrap();
+        daemon_reload(true).unwrap();
+    }
+
+    #[test]
+    fn append_log_writes_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("uninstall.log");
+        append_log(&log, "test entry").unwrap();
+        let content = fs::read_to_string(&log).unwrap();
+        assert!(content.contains("test entry"));
+    }
+
+    #[test]
+    fn detect_installation_finds_state_dir_from_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctl_context(dir.path());
+        let plan = detect_installation(&ctx, "madmail").unwrap();
+
+        assert!(plan.installation_found);
+        assert!(plan.state_dirs.iter().any(|p| p == &ctx.state_dir));
+        assert!(plan.service_names.contains(&"madmail".to_string()));
+    }
+
+    #[test]
+    fn detect_installation_not_found_without_state_or_artifacts() {
+        let base = tempfile::tempdir().unwrap();
+        let missing = base.path().join("missing-state");
+        let ctx = ctl_context(&missing);
+        let plan = detect_installation(&ctx, "madmail-test-only").unwrap();
+
+        assert!(!plan.installation_found);
+        assert!(plan
+            .service_names
+            .contains(&"madmail-test-only".to_string()));
+    }
+
+    #[tokio::test]
+    async fn uninstall_dry_run_completes_when_state_dir_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("uninstall.log");
+        let args =
+            Args::try_parse_from(["madmail", "--state-dir", dir.path().to_str().unwrap()]).unwrap();
+        let flags = sample_flags(true, log.clone());
+
+        uninstall(&args, &flags).await.unwrap();
+        assert!(log.is_file());
+    }
+
+    #[tokio::test]
+    async fn uninstall_reports_not_found_when_nothing_detected() {
+        let base = tempfile::tempdir().unwrap();
+        let missing = base.path().join("no-install");
+        let log = base.path().join("log");
+        let args = Args::try_parse_from([
+            "madmail",
+            "--json",
+            "--state-dir",
+            missing.to_str().unwrap(),
+        ])
+        .unwrap();
+        let flags = UninstallArgs::parse_from([
+            "uninstall",
+            "--dry-run",
+            "--force",
+            "--log-file",
+            log.to_str().unwrap(),
+        ]);
+
+        uninstall(&args, &flags).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn uninstall_requires_root_without_dry_run() {
+        if is_root() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let args =
+            Args::try_parse_from(["madmail", "--state-dir", dir.path().to_str().unwrap()]).unwrap();
+        let flags = sample_flags(false, dir.path().join("uninstall.log"));
+
+        let err = uninstall(&args, &flags).await.unwrap_err();
+        assert!(err.to_string().contains("root"));
+    }
+
+    #[test]
+    fn dry_run_remove_steps_leave_artifacts_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let state = dir.path().join("state");
+        let binary = dir.path().join("madmail");
+        fs::create_dir_all(&config).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::write(&binary, b"").unwrap();
+
+        let plan = UninstallPlan {
+            installation_found: true,
+            primary_binary_name: "madmail".into(),
+            config_dirs: vec![config.clone()],
+            state_dirs: vec![state.clone()],
+            binary_paths: vec![binary.clone()],
+            ..Default::default()
+        };
+
+        let flags = sample_flags(true, dir.path().join("log"));
+
+        remove_config(&plan, &flags).unwrap();
+        remove_data(&plan, &flags).unwrap();
+        remove_binaries(&plan, &flags).unwrap();
+
+        assert!(config.is_dir());
+        assert!(state.is_dir());
+        assert!(binary.is_file());
+    }
+}

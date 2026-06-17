@@ -89,7 +89,11 @@ async fn build_status_body(
     let boot_time = format_boot_time_rfc3339(boot_secs);
 
     let (sent, outbound, received) = message_stats_snapshot();
-    let turn_port = setting_port(&st.pool, settings_keys::TURN_PORT, "3478").await;
+    let file_relay = st.file_config.effective_turn_relay_port_range();
+    let relay_min =
+        setting_port_u16(&st.pool, settings_keys::TURN_RELAY_PORT_MIN, file_relay.min).await;
+    let relay_max =
+        setting_port_u16(&st.pool, settings_keys::TURN_RELAY_PORT_MAX, file_relay.max).await;
     // Live IMAP sessions tracked in-process (on_open/on_close). Do not merge with `ss`:
     // `ss` counts raw TCP sockets and was previously mixed via max()/union(), producing
     // inconsistent connection vs unique-IP counts.
@@ -101,7 +105,7 @@ async fn build_status_body(
         let (ss_conns, ss_ips) = count_tcp_on_ports(&ports);
         (ss_conns, ss_ips.len() as i32)
     };
-    let turn_relays = count_turn_relays(&turn_port);
+    let turn_relays = count_turn_relays(relay_min, relay_max);
     // Shadowsocks is not implemented — always report zero (do not probe `ss` on SS port).
     let (ss_conns, ss_ips) = (0, 0);
 
@@ -372,13 +376,6 @@ fn is_ip_like_domain(domain: &str) -> bool {
     chatmail_types::is_ipv4_literal(bare)
 }
 
-async fn setting_port(pool: &DbPool, key: &str, default: &str) -> String {
-    match get_setting(pool, key).await {
-        Ok(Some(v)) if !v.trim().is_empty() => v,
-        _ => default.to_string(),
-    }
-}
-
 /// Sum established TCP connections on local IMAP ports (`ss` fallback).
 fn count_tcp_on_ports(ports: &[String]) -> (i32, std::collections::HashSet<String>) {
     let mut ips = std::collections::HashSet::new();
@@ -430,12 +427,27 @@ fn count_tcp_connections(port: &str) -> (i32, std::collections::HashSet<String>)
     (connections, ips)
 }
 
-fn count_turn_relays(known_port: &str) -> i32 {
+async fn setting_port_u16(pool: &DbPool, key: &str, default: u16) -> u16 {
+    if let Ok(Some(v)) = get_setting(pool, key).await {
+        if let Ok(p) = v.trim().parse::<u16>() {
+            if p != 0 {
+                return p;
+            }
+        }
+    }
+    default
+}
+
+fn count_turn_relays(relay_min: u16, relay_max: u16) -> i32 {
     let output = match std::process::Command::new("ss").args(["-unap"]).output() {
         Ok(o) if o.status.success() => o,
         _ => return 0,
     };
     let text = String::from_utf8_lossy(&output.stdout);
+    count_turn_relays_from_ss_output(&text, relay_min, relay_max)
+}
+
+fn count_turn_relays_from_ss_output(text: &str, relay_min: u16, relay_max: u16) -> i32 {
     let mut count = 0i32;
     for line in text.lines() {
         if !line.contains("\"chatmail\"") && !line.contains("\"maddy\"") {
@@ -446,7 +458,10 @@ fn count_turn_relays(known_port: &str) -> i32 {
             continue;
         }
         let local_port = extract_port_from_addr(fields[3]);
-        if local_port == known_port {
+        let Ok(port) = local_port.parse::<u16>() else {
+            continue;
+        };
+        if port < relay_min || port > relay_max {
             continue;
         }
         count += 1;
@@ -654,6 +669,19 @@ pub fn db_err(e: impl std::fmt::Display) -> (u16, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn count_turn_relays_filters_by_configured_range() {
+        let ss = r#"
+UNCONN 0 0 203.0.113.10:3478 0.0.0.0:* users:(("chatmail",pid=1,fd=3))
+UNCONN 0 0 203.0.113.10:55001 0.0.0.0:* users:(("chatmail",pid=1,fd=4))
+UNCONN 0 0 203.0.113.10:55005 0.0.0.0:* users:(("maddy",pid=2,fd=5))
+UNCONN 0 0 203.0.113.10:60000 0.0.0.0:* users:(("chatmail",pid=1,fd=6))
+UNCONN 0 0 203.0.113.10:55003 0.0.0.0:* users:(("other",pid=3,fd=7))
+"#;
+        assert_eq!(count_turn_relays_from_ss_output(ss, 55_000, 55_010), 2);
+        assert_eq!(count_turn_relays_from_ss_output(ss, 49152, 65535), 3);
+    }
 
     #[test]
     fn count_tcp_connections_uses_peer_address() {

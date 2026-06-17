@@ -263,8 +263,23 @@ pub fn perform_upgrade(new_bin_path: &Path) -> Result<()> {
             );
     }
 
+    refresh_cli_docs_after_upgrade();
+
     eprintln!("🎉 Upgrade complete.");
     Ok(())
+}
+
+/// Rewrite man page and shell tab-completion scripts after the binary is replaced.
+fn refresh_cli_docs_after_upgrade() {
+    let name = crate::ctl::argv_binary_name();
+    eprintln!("📚 Refreshing man page and shell completions for {name}...");
+    match crate::ctl::install_cli_docs(&name, false) {
+        Ok(()) => eprintln!("✅ Man page and shell completions updated."),
+        Err(e) => eprintln!(
+            "⚠️ Could not refresh man page/completions (tab completion may be stale until \
+             `madmail completion bash | sudo tee /usr/share/bash-completion/completions/{name}`): {e}"
+        ),
+    }
 }
 
 #[cfg(test)]

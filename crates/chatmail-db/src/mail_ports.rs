@@ -57,3 +57,64 @@ pub async fn load_mail_port_overrides(pool: &DbPool) -> Result<DbMailPorts> {
         https_port: get_setting(pool, settings_keys::HTTPS_PORT).await?,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    #[test]
+    fn db_ports_from_settings_maps_known_keys() {
+        let mut map = HashMap::new();
+        map.insert(settings_keys::SMTP_PORT.to_string(), "2525".to_string());
+        map.insert(
+            settings_keys::SUBMISSION_PORT.to_string(),
+            "587".to_string(),
+        );
+        map.insert(
+            settings_keys::SUBMISSION_TLS_PORT.to_string(),
+            "465".to_string(),
+        );
+        map.insert(settings_keys::IMAP_PORT.to_string(), "143".to_string());
+        map.insert(settings_keys::IMAP_TLS_PORT.to_string(), "993".to_string());
+        map.insert(
+            settings_keys::DCLOGIN_IMAP_SECURITY.to_string(),
+            "starttls".to_string(),
+        );
+        map.insert(
+            settings_keys::DCLOGIN_SMTP_SECURITY.to_string(),
+            "ssl".to_string(),
+        );
+        map.insert(settings_keys::HTTP_PORT.to_string(), "8080".to_string());
+        map.insert(settings_keys::HTTPS_PORT.to_string(), "8443".to_string());
+
+        let ports = db_ports_from_settings(&map);
+        assert_eq!(ports.smtp_port.as_deref(), Some("2525"));
+        assert_eq!(ports.submission_port.as_deref(), Some("587"));
+        assert_eq!(ports.submission_tls_port.as_deref(), Some("465"));
+        assert_eq!(ports.imap_port.as_deref(), Some("143"));
+        assert_eq!(ports.imap_tls_port.as_deref(), Some("993"));
+        assert_eq!(ports.dclogin_imap_security.as_deref(), Some("starttls"));
+        assert_eq!(ports.dclogin_smtp_security.as_deref(), Some("ssl"));
+        assert_eq!(ports.http_port.as_deref(), Some("8080"));
+        assert_eq!(ports.https_port.as_deref(), Some("8443"));
+    }
+
+    #[test]
+    fn db_ports_from_settings_ignores_blank_values() {
+        let mut map = HashMap::new();
+        map.insert(settings_keys::SMTP_PORT.to_string(), "  ".to_string());
+        map.insert(settings_keys::IMAP_PORT.to_string(), String::new());
+
+        let ports = db_ports_from_settings(&map);
+        assert!(ports.smtp_port.is_none());
+        assert!(ports.imap_port.is_none());
+    }
+
+    #[test]
+    fn db_ports_from_settings_empty_map_is_default() {
+        let ports = db_ports_from_settings(&HashMap::new());
+        assert_eq!(ports, DbMailPorts::default());
+    }
+}

@@ -28,6 +28,7 @@ Madmail publishes official container images to **GitHub Container Registry (GHCR
   - [Bring your own certificates](#bring-your-own-certificates-tls_mode-file)
   - [TLS quick reference](#tls-quick-reference)
 - [Ports](#ports)
+- [TURN (calls)](#turn-calls)
 - [Volumes and layout](#volumes-and-layout)
 - [Environment variables](#environment-variables-bundled-config-only)
 - [Custom configuration](#custom-configuration)
@@ -97,6 +98,7 @@ docker run -d \
   --cap-add NET_BIND_SERVICE \
   -p 25:25 -p 80:80 -p 443:443 \
   -p 143:143 -p 465:465 -p 587:587 -p 993:993 \
+  -p 3478:3478/udp -p 49152-65535:49152-65535/udp \
   -v /var/lib/madmail:/var/lib/madmail \
   -v /etc/madmail:/etc/madmail:ro \
   -v /run/madmail:/run/madmail \
@@ -177,6 +179,8 @@ docker run -d \
   -p 465:465 \
   -p 587:587 \
   -p 993:993 \
+  -p 3478:3478/udp \
+  -p 49152-65535:49152-65535/udp \
   -v /var/lib/madmail:/var/lib/madmail \
   -v /etc/madmail:/etc/madmail:ro \
   -v /run/madmail:/run/madmail \
@@ -212,6 +216,8 @@ services:
       - "465:465"
       - "587:587"
       - "993:993"
+      - "3478:3478/udp"
+      - "49152-65535:49152-65535/udp"
     volumes:
       - /var/lib/madmail:/var/lib/madmail
       - /etc/madmail:/etc/madmail:ro
@@ -392,6 +398,7 @@ docker run --rm \
 docker run -d --name madmail --restart unless-stopped \
   --cap-add NET_BIND_SERVICE \
   -p 25:25 -p 80:80 -p 443:443 -p 143:143 -p 465:465 -p 587:587 -p 993:993 \
+  -p 3478:3478/udp -p 49152-65535:49152-65535/udp \
   -v /var/lib/madmail:/var/lib/madmail \
   -v /etc/madmail:/etc/madmail:ro \
   -v /run/madmail:/run/madmail \
@@ -491,14 +498,79 @@ Set `tls_mode file` in the config and ensure `tls file` points at those paths (t
 | `587` | Submission (STARTTLS) |
 | `993` | IMAPS |
 | `80` / `443` | HTTP / HTTPS — Delta Chat registration page, chatmail API, Admin API |
+| `3478` / **udp** | TURN/STUN control (Delta Chat voice/video calls) |
+| `49152–65535` / **udp** | TURN relay media (default range; configurable in admin/config) |
 
 The **admin web dashboard** is optional and disabled until `admin-web enable`. When enabled it is mounted at `/admin` (or a custom path). The **Admin API** is always available at `/api/admin` when `admin_token` is not set to `disabled`.
 
 Production configs often also expose `80` / `443` (HTTPS registration) and `8388` (Shadowsocks). Map whatever your config file listens on, for example:
 
 ```bash
--p 80:80 -p 443:443 -p 8388:8388
+-p 80:80 -p 443:443 -p 8388:8388 -p 3478:3478/udp -p 49152-65535:49152-65535/udp
 ```
+
+## TURN (calls)
+
+Delta Chat voice/video calls use the embedded TURN server in `madmail`. It needs **UDP** on two port groups (defaults shown):
+
+| Purpose | Ports | Notes |
+|---------|-------|-------|
+| TURN/STUN control | `3478` | Configurable via `turn_port` / admin `__TURN_PORT__` |
+| TURN relay (media) | `49152–65535` (default) | Configurable via `relay_port_min` / `relay_port_max` or admin Services page |
+
+`madmail install` enables TURN and sets `turn_server` / `relay_ip` from your `--ip` or `--domain`. In Docker, clients must see the **host public IP** in IMAP metadata — not a container-only address. After install, confirm `turn_server` and `relay_ip` in `/etc/madmail/madmail.conf` match your VPS public IP.
+
+### Firewall (host and cloud)
+
+Open the same UDP ranges on the **Docker host** and in your cloud security group:
+
+```bash
+# ufw example
+ufw allow 3478/udp comment 'madmail TURN/STUN'
+ufw allow 49152:65535/udp comment 'madmail TURN relay'
+```
+
+If you customized `turn_port`, open that port instead of `3478`. More examples (firewalld, nftables): [Delta Chat calls — network exposure](../TDD/20-deltachat-calls.md#network-exposure-firewall).
+
+### Docker Compose (bridged network)
+
+Add TURN ports alongside mail/HTTPS (adjust `3478` if you changed `turn_port`; use your configured relay range instead of `49152-65535` when narrowed):
+
+```yaml
+services:
+  madmail:
+    image: ghcr.io/themadorg/madmail:latest
+    ports:
+      - "3478:3478/udp"
+      - "49152-65535:49152-65535/udp"
+```
+
+Mapping the full relay range works but is heavy. For production calls, prefer **`network_mode: host`** so TURN binds directly on the host (no `ports:` entries needed for TURN; host firewall rules still apply):
+
+```yaml
+services:
+  madmail:
+    image: ghcr.io/themadorg/madmail:latest
+    network_mode: host
+    cap_add:
+      - NET_BIND_SERVICE
+    volumes:
+      - /var/lib/madmail:/var/lib/madmail
+      - /etc/madmail:/etc/madmail:ro
+      - /run/madmail:/run/madmail
+```
+
+Enable TURN in the admin UI or ensure `turn_enable yes` and `__TURN_ENABLED__` are on. Troubleshooting: [Delta Chat calls (TDD)](../TDD/20-deltachat-calls.md).
+
+### Verify TURN after building the image
+
+From the repo root (requires Docker and Go for `context/relay-ping`):
+
+```bash
+make test-docker-turn-e2e
+```
+
+This builds a local image, runs `install --simple --ip 127.0.0.1`, maps UDP `3478` and a narrow relay range (`55000–55010` by default), runs `relay-ping` connectivity, and checks that a TURN allocation lands in that relay range. See `scripts/docker-turn-e2e.sh` for env overrides (`DOCKER_TURN_BUILD=0`, `DOCKER_TURN_SKIP_ALLOCATE=1`, `DOCKER_TURN_RELAY_MIN` / `MAX`).
 
 ## Volumes and layout
 
@@ -541,6 +613,7 @@ cp assets/madmail.conf.docker /etc/madmail/madmail.conf
 docker run -d --name madmail --restart unless-stopped \
   --cap-add NET_BIND_SERVICE \
   -p 25:25 -p 80:80 -p 443:443 -p 143:143 -p 465:465 -p 587:587 -p 993:993 -p 8388:8388 \
+  -p 3478:3478/udp -p 49152-65535:49152-65535/udp \
   -v /var/lib/madmail:/var/lib/madmail \
   -v /etc/madmail:/etc/madmail:ro \
   -v /run/madmail:/run/madmail \
@@ -593,13 +666,15 @@ services:
       - "465:465"
       - "587:587"
       - "993:993"
+      - "3478:3478/udp"
+      - "49152-65535:49152-65535/udp"
     volumes:
       - /var/lib/madmail:/var/lib/madmail
       - /etc/madmail:/etc/madmail
       - /run/madmail:/run/madmail
 ```
 
-Run `madmail install …` once before `docker compose up -d` (same as [Quick start (domain name)](#quick-start-domain-name)).
+Run `madmail install …` once before `docker compose up -d` (same as [Quick start (domain name)](#quick-start-domain-name)). For TURN-only details see [TURN (calls)](#turn-calls).
 
 ## Offline install (save / load)
 
@@ -643,6 +718,7 @@ The Dockerfile uses three stages: admin-web (Bun), Rust compile (Alpine), and Al
 
 ## Related docs
 
+- [Delta Chat calls — TURN ports, firewall, Docker](../TDD/20-deltachat-calls.md)
 - [Deployment scenarios (IP, domain, certs)](../project/user-guide/11-deployment-ip-domain-certs.md)
 - [TLS certificates (TDD)](../TDD/19-certificates.md)
 - [Install: public IP + Let's Encrypt](../install-simple-ip-acme.md)

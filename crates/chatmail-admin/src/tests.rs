@@ -583,6 +583,148 @@ async fn p9_admin_web_path_set_enables_and_reloads() {
 }
 
 #[tokio::test]
+async fn turn_relay_port_settings_in_all_settings_snapshot() {
+    let (st, _dir) = test_state(
+        "secret-token-01234567890123456789012345678901",
+        AppConfig::default(),
+    )
+    .await;
+    let (_, body) = resources::dispatch(&st, "GET", "/admin/settings", &json!({}))
+        .await
+        .unwrap();
+    let body = body.unwrap();
+    assert_eq!(
+        body.get("turn_relay_port_min")
+            .and_then(|v| v.get("value"))
+            .and_then(|v| v.as_str()),
+        Some("49152")
+    );
+    assert_eq!(
+        body.get("turn_relay_port_max")
+            .and_then(|v| v.get("value"))
+            .and_then(|v| v.as_str()),
+        Some("65535")
+    );
+}
+
+#[tokio::test]
+async fn turn_relay_port_settings_set_get_reset() {
+    let (st, _dir) = test_state(
+        "secret-token-01234567890123456789012345678901",
+        AppConfig::default(),
+    )
+    .await;
+
+    let (_, body) = resources::dispatch(
+        &st,
+        "POST",
+        "/admin/settings/turn_relay_port_min",
+        &json!({ "action": "set", "value": "55000" }),
+    )
+    .await
+    .unwrap();
+    let body = body.unwrap();
+    assert_eq!(body.get("value").and_then(|v| v.as_str()), Some("55000"));
+    assert_eq!(
+        body.get("restart_required").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+
+    let (_, body) = resources::dispatch(
+        &st,
+        "POST",
+        "/admin/settings/turn_relay_port_max",
+        &json!({ "action": "set", "value": "55010" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        body.unwrap().get("value").and_then(|v| v.as_str()),
+        Some("55010")
+    );
+
+    let (_, body) = resources::dispatch(
+        &st,
+        "GET",
+        "/admin/settings/turn_relay_port_min",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        body.unwrap().get("value").and_then(|v| v.as_str()),
+        Some("55000")
+    );
+
+    resources::dispatch(
+        &st,
+        "POST",
+        "/admin/settings/turn_relay_port_min",
+        &json!({ "action": "reset" }),
+    )
+    .await
+    .unwrap();
+    let (_, body) = resources::dispatch(
+        &st,
+        "GET",
+        "/admin/settings/turn_relay_port_min",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        body.unwrap().get("is_set").and_then(|v| v.as_bool()),
+        Some(false)
+    );
+}
+
+#[tokio::test]
+async fn turn_relay_port_settings_reject_min_above_max() {
+    let (st, _dir) = test_state(
+        "secret-token-01234567890123456789012345678901",
+        AppConfig::default(),
+    )
+    .await;
+    resources::dispatch(
+        &st,
+        "POST",
+        "/admin/settings/turn_relay_port_max",
+        &json!({ "action": "set", "value": "50000" }),
+    )
+    .await
+    .unwrap();
+    let err = resources::dispatch(
+        &st,
+        "POST",
+        "/admin/settings/turn_relay_port_min",
+        &json!({ "action": "set", "value": "60000" }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0, 400);
+    assert!(err.1.contains("must be <="));
+}
+
+#[tokio::test]
+async fn turn_relay_port_settings_reject_control_port_in_range() {
+    let (st, _dir) = test_state(
+        "secret-token-01234567890123456789012345678901",
+        AppConfig::default(),
+    )
+    .await;
+    let err = resources::dispatch(
+        &st,
+        "POST",
+        "/admin/settings/turn_relay_port_min",
+        &json!({ "action": "set", "value": "3000" }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.0, 400);
+    assert!(err.1.contains("3478"));
+}
+
+#[tokio::test]
 async fn p9_auth_gate_bearer() {
     use std::collections::HashMap;
     let gate = crate::auth::AuthGate::new("secret-token-01234567890123456789012345678901".into());

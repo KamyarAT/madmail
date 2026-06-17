@@ -21,22 +21,23 @@ Fix/remove stub [`imap_e2e_getmetadata_turn_relay`](../../../tests/imap_e2e.rs) 
 
 Optional: after IMAP metadata fetch, `smtp_submit` from [`tests/support/mod.rs`](../../../tests/support/mod.rs) to prove mail stack still healthy — same session as Secure Join E2E (no TURN on SMTP, regression guard only).
 
-### External relay-ping binary (running server)
+### External relay-ping binary (Docker container)
 
-Document Makefile target:
+Implemented as `make test-docker-turn-e2e` ([`scripts/docker-turn-e2e.sh`](../../../scripts/docker-turn-e2e.sh)):
 
-```makefile
-test-turn-relay-ping: relay-ping-build run-bg
-	# Future: relay-ping imap probe + metadata step
-```
+1. `docker build` → `install --simple --ip 127.0.0.1`
+2. Patch `relay_port_min` / `relay_port_max` (default test range `55000–55010`) and map UDP ports
+3. `relay-ping -test connectivity` (SMTP/IMAP + `getmetadata-deltachat-turn`)
+4. `cargo test -p chatmail-integration --test docker_turn_e2e docker_turn_live_allocate -- --ignored` — TURN allocate in range
 
-Reference: [`context/relay-ping/internal/check/imapcheck/imapcheck.go`](../../../context/relay-ping/internal/check/imapcheck/imapcheck.go) — LOGIN, SELECT, IDLE sequence; extend with GETMETADATA when upstream adds check.
+Reference: [`context/relay-ping/internal/check/imapcheck/imapcheck.go`](../../../context/relay-ping/internal/check/imapcheck/imapcheck.go) — LOGIN, SELECT, IDLE, GETMETADATA `/shared/vendor/deltachat/turn`.
 
 ## Files touched
 
 - `tests/turn_e2e.rs`
 - `tests/imap_e2e.rs` — remove wrong key
-- `Makefile` — `test-turn`, `test-turn-relay-ping`
+- `Makefile` — `test-turn`, `test-docker-turn-e2e`
+- `scripts/docker-turn-e2e.sh`, `tests/docker_turn_e2e.rs`
 - `docs/TDD/03-imap-server.md` — cross-link b9
 
 ## TDD references
@@ -60,7 +61,8 @@ Reference: [`context/relay-ping/internal/check/imapcheck/imapcheck.go`](../../..
 
 ```bash
 cargo test -p chatmail-integration turn_imap_e2e
-make test-turn   # alias: unit + smoke + integration + e2e
+make test-turn   # unit + smoke + in-process integration/e2e
+make test-docker-turn-e2e   # Docker image + relay-ping + UDP allocate (manual)
 ```
 
 ## Linked tests

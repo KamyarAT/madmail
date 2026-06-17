@@ -25,6 +25,7 @@ mod urls;
 mod xray;
 
 pub use allowed_ports::build_allowed_ports;
+pub use cipher::parse_cipher;
 pub use runtime::{
     resolve_runtime, resolve_runtime_from_settings, ss_runtime_enabled, ShadowsocksRuntime,
 };

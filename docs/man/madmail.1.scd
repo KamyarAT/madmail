@@ -142,6 +142,13 @@ Extended documentation:
 *push*
 	Delta Chat push notification mode (*auto*, *on*, *off*).
 
+*proxy* (*pr*)
+	Shadowsocks circumvention proxy (*status*, *enable*, *disable*,
+	*cipher*, *password*).
+	Requires *ss_addr* and *ss_password* in the configuration file.
+	Port overrides use *port shadowsocks*.
+	Run *reload* after changes to apply to a running server.
+
 *webimap*, *websmtp*
 	Enable or disable WebIMAP and WebSMTP HTTP APIs.
 
@@ -287,6 +294,12 @@ Print admin API token for scripts:
 Install bash completion without a full system install:
 
 	madmail completion bash | sudo tee /usr/share/bash-completion/completions/madmail
+
+Enable Shadowsocks and show the client URL:
+
+	madmail proxy enable
+	madmail proxy status
+	madmail reload
 
 # NOTES
 

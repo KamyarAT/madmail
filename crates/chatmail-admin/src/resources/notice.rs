@@ -167,3 +167,222 @@ pub async fn notice(st: &AdminState, method: &str, body: &Value) -> AdminResult 
         _ => Err((405, format!("method {method} not allowed"))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use chatmail_config::AppConfig;
+    use chatmail_db::{init_memory_db, passwords, seed_install_defaults};
+    use chatmail_state::AppState;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::AdminState;
+
+    async fn test_admin_state() -> (AdminState, TempDir) {
+        let pool = init_memory_db().await.unwrap();
+        seed_install_defaults(&pool).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let app = Arc::new(AppState::with_quota_and_message_limit(
+            dir.path(),
+            chatmail_config::DEFAULT_QUOTA_BYTES,
+            &AppConfig::default(),
+            pool.clone(),
+        ));
+        app.hydrate(&pool, &AppConfig::default()).await.unwrap();
+        let st = AdminState::new(
+            pool,
+            app,
+            AppConfig::default(),
+            dir.path().to_path_buf(),
+            "example.org".into(),
+            "secret-token-01234567890123456789012345678901".into(),
+            None,
+        );
+        (st, dir)
+    }
+
+    #[test]
+    fn resolve_mail_domain_prefers_recipient() {
+        let domain = resolve_mail_domain("alice@mail.example.org", &[]);
+        assert_eq!(domain, "mail.example.org");
+    }
+
+    #[test]
+    fn resolve_mail_domain_falls_back_to_first_user() {
+        let users = vec!["bob@chat.example".into(), "carol@other.example".into()];
+        let domain = resolve_mail_domain("", &users);
+        assert_eq!(domain, "chat.example");
+    }
+
+    #[test]
+    fn resolve_mail_domain_defaults_to_localhost() {
+        assert_eq!(resolve_mail_domain("", &[]), "localhost");
+    }
+
+    #[test]
+    fn normalize_recipient_empty_returns_empty() {
+        assert_eq!(normalize_recipient("  ", "example.org"), "");
+    }
+
+    #[test]
+    fn normalize_recipient_keeps_full_address() {
+        assert_eq!(
+            normalize_recipient("user@domain.test", "example.org"),
+            "user@domain.test"
+        );
+    }
+
+    #[test]
+    fn normalize_recipient_appends_domain_to_localpart() {
+        assert_eq!(
+            normalize_recipient("alice", "example.org"),
+            "alice@example.org"
+        );
+    }
+
+    #[test]
+    fn build_notice_message_includes_headers_and_body() {
+        let raw = build_notice_message(
+            "admin@example.org",
+            "user@example.org",
+            "Maintenance",
+            "Server reboot tonight",
+            "example.org",
+        );
+        let text = String::from_utf8(raw).unwrap();
+        assert!(text.contains("From: Admin <admin@example.org>"));
+        assert!(text.contains("To: user@example.org"));
+        assert!(text.contains("Subject: Maintenance"));
+        assert!(text.contains("Date: "));
+        assert!(text.contains("Message-ID: <"));
+        assert!(text.contains("Content-Type: text/plain; charset=utf-8"));
+        assert!(text.contains("Server reboot tonight\n"));
+    }
+
+    #[test]
+    fn build_notice_message_appends_trailing_newline_to_body() {
+        let raw = build_notice_message("admin@x.org", "u@x.org", "Hi", "no newline yet", "x.org");
+        let text = String::from_utf8(raw).unwrap();
+        assert!(text.ends_with("no newline yet\n"));
+    }
+
+    #[tokio::test]
+    async fn get_notice_reports_user_count_and_domain() {
+        let (st, _dir) = test_admin_state().await;
+        passwords::create_user(&st.pool, "alice@example.org", "hash")
+            .await
+            .unwrap();
+        passwords::create_user(&st.pool, "bob@example.org", "hash")
+            .await
+            .unwrap();
+
+        let (status, body) = notice(&st, "GET", &json!({})).await.unwrap();
+        assert_eq!(status, 200);
+        let body = body.unwrap();
+        assert_eq!(body["total_users"], 2);
+        assert_eq!(body["domain"], "example.org");
+    }
+
+    #[tokio::test]
+    async fn post_rejects_missing_subject_or_body() {
+        let (st, _dir) = test_admin_state().await;
+
+        let err = notice(&st, "POST", &json!({ "subject": "  ", "body": "hello" }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, 400);
+        assert!(err.1.contains("subject"));
+
+        let err = notice(&st, "POST", &json!({ "subject": "hi", "body": "  " }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, 400);
+        assert!(err.1.contains("body"));
+    }
+
+    #[tokio::test]
+    async fn post_rejects_broadcast_when_no_users_exist() {
+        let (st, _dir) = test_admin_state().await;
+        let err = notice(&st, "POST", &json!({ "subject": "Hi", "body": "Everyone" }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.0, 400);
+        assert!(err.1.contains("no recipients"));
+    }
+
+    #[tokio::test]
+    async fn post_sends_to_explicit_recipient() {
+        let (st, _dir) = test_admin_state().await;
+        passwords::create_user(&st.pool, "alice@example.org", "hash")
+            .await
+            .unwrap();
+
+        let (status, body) = notice(
+            &st,
+            "POST",
+            &json!({
+                "subject": "Notice",
+                "body": "Hello",
+                "recipient": "bob@example.org"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body.unwrap()["sent"], 1);
+    }
+
+    #[tokio::test]
+    async fn post_normalizes_localpart_recipient_with_domain() {
+        let (st, _dir) = test_admin_state().await;
+        passwords::create_user(&st.pool, "alice@example.org", "hash")
+            .await
+            .unwrap();
+
+        let (status, body) = notice(
+            &st,
+            "POST",
+            &json!({
+                "subject": "Notice",
+                "body": "Hello",
+                "recipient": "bob"
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body.unwrap()["sent"], 1);
+    }
+
+    #[tokio::test]
+    async fn post_broadcasts_to_all_users() {
+        let (st, _dir) = test_admin_state().await;
+        passwords::create_user(&st.pool, "alice@example.org", "hash")
+            .await
+            .unwrap();
+        passwords::create_user(&st.pool, "bob@example.org", "hash")
+            .await
+            .unwrap();
+
+        let (status, body) = notice(
+            &st,
+            "POST",
+            &json!({ "subject": "Broadcast", "body": "All users" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(body.unwrap()["sent"], 2);
+    }
+
+    #[tokio::test]
+    async fn unsupported_method_returns_405() {
+        let (st, _dir) = test_admin_state().await;
+        let err = notice(&st, "PATCH", &json!({})).await.unwrap_err();
+        assert_eq!(err.0, 405);
+        assert!(err.1.contains("PATCH"));
+    }
+}

@@ -19,7 +19,7 @@
 
 use std::net::SocketAddr;
 
-use chatmail_config::AppConfig;
+use chatmail_config::{turn_relay_ports::TurnRelayPortRange, AppConfig};
 use chatmail_db::{get_bool_setting, get_setting, settings_keys, DbPool};
 use chatmail_turn::{
     spawn_turn_server_with_opts, turn_debug_from_env, turn_force_relay_test_from_env,
@@ -77,6 +77,11 @@ pub async fn start_turn_server(
     let listen = turn_listen_addr(file_config)?;
     let external = turn_external_addr(pool, file_config, listen, hostname).await?;
     let realm = effective_turn_realm(pool, file_config, hostname).await?;
+    let turn_port = effective_turn_port(pool, file_config).await?;
+    let relay_range = effective_turn_relay_port_range(pool, file_config).await?;
+    relay_range
+        .validate(turn_port)
+        .map_err(chatmail_types::ChatmailError::config)?;
 
     warn_if_turn_listen_unreachable(listen, external);
 
@@ -84,6 +89,8 @@ pub async fn start_turn_server(
     let opts = TurnSpawnOpts {
         debug: file_config.turn_debug || turn_debug_from_env(),
         test_relay_only: force_relay_test,
+        relay_port_min: relay_range.min,
+        relay_port_max: relay_range.max,
     };
     let handle = spawn_turn_server_with_opts(&secret, &realm, listen, external, opts)
         .await
@@ -93,8 +100,10 @@ pub async fn start_turn_server(
         external = %handle.external,
         realm = %handle.realm,
         turn_test_force_relay = force_relay_test,
-        "TURN server started (open UDP {} and relay ports 49152-65535 on the relay IP)",
-        listen.port()
+        "TURN server started (open UDP {} and relay ports {}-{} on the relay IP)",
+        listen.port(),
+        relay_range.min,
+        relay_range.max
     );
     if force_relay_test {
         tracing::info!(
@@ -161,6 +170,33 @@ async fn effective_turn_realm(
         .turn_realm
         .clone()
         .unwrap_or_else(|| hostname.to_string()))
+}
+
+async fn effective_turn_relay_port_range(
+    pool: &DbPool,
+    file_config: &AppConfig,
+) -> Result<TurnRelayPortRange> {
+    let file = file_config.effective_turn_relay_port_range();
+    let min =
+        effective_turn_relay_port_bound(pool, settings_keys::TURN_RELAY_PORT_MIN, file.min).await?;
+    let max =
+        effective_turn_relay_port_bound(pool, settings_keys::TURN_RELAY_PORT_MAX, file.max).await?;
+    Ok(TurnRelayPortRange::resolve(min, max))
+}
+
+async fn effective_turn_relay_port_bound(
+    pool: &DbPool,
+    key: &str,
+    file_default: u16,
+) -> Result<u16> {
+    if let Ok(Some(v)) = get_setting(pool, key).await {
+        if let Ok(p) = v.trim().parse::<u16>() {
+            if p != 0 {
+                return Ok(p);
+            }
+        }
+    }
+    Ok(file_default)
 }
 
 async fn effective_turn_ttl(pool: &DbPool, file_config: &AppConfig) -> Result<u64> {
@@ -268,6 +304,56 @@ mod tests {
         let listen = turn_listen_addr(&cfg).unwrap();
         assert_eq!(listen.ip(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         assert_eq!(listen.port(), 3478);
+    }
+
+    #[tokio::test]
+    async fn file_config_relay_port_range_used_when_db_unset() {
+        let pool = init_memory_db().await.unwrap();
+        let cfg = AppConfig {
+            turn_enable: true,
+            turn_secret: Some("s3cr3t".into()),
+            turn_relay_port_min: 48_000,
+            turn_relay_port_max: 48_100,
+            ..Default::default()
+        };
+        let range = effective_turn_relay_port_range(&pool, &cfg).await.unwrap();
+        assert_eq!(range.min, 48_000);
+        assert_eq!(range.max, 48_100);
+    }
+
+    #[tokio::test]
+    async fn start_turn_rejects_relay_range_overlapping_control_port() {
+        let pool = init_memory_db().await.unwrap();
+        chatmail_db::set_setting(&pool, settings_keys::TURN_ENABLED, "true")
+            .await
+            .unwrap();
+        chatmail_db::set_setting(&pool, settings_keys::TURN_RELAY_PORT_MIN, "3000")
+            .await
+            .unwrap();
+        chatmail_db::set_setting(&pool, settings_keys::TURN_RELAY_PORT_MAX, "4000")
+            .await
+            .unwrap();
+        let cfg = turn_file_config();
+        let err = match start_turn_server(&pool, &cfg, "mail.test").await {
+            Ok(_) => panic!("expected relay range overlapping control port to be rejected"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("3478"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn admin_relay_port_range_override() {
+        let pool = init_memory_db().await.unwrap();
+        chatmail_db::set_setting(&pool, settings_keys::TURN_RELAY_PORT_MIN, "50000")
+            .await
+            .unwrap();
+        chatmail_db::set_setting(&pool, settings_keys::TURN_RELAY_PORT_MAX, "50100")
+            .await
+            .unwrap();
+        let cfg = turn_file_config();
+        let range = effective_turn_relay_port_range(&pool, &cfg).await.unwrap();
+        assert_eq!(range.min, 50000);
+        assert_eq!(range.max, 50100);
     }
 
     #[test]

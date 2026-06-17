@@ -72,4 +72,70 @@ mod unit {
         };
         assert!(cfg.is_expired(&stale));
     }
+
+    #[test]
+    fn from_settings_clamps_invalid_values_to_minimums() {
+        let cfg = QueueConfig::from_settings(
+            std::path::Path::new("/state"),
+            &QueueSettings {
+                max_tries: 0,
+                max_parallelism: 0,
+                initial_retry_secs: 0,
+                retry_time_scale: 0.5,
+                max_delivery_secs: 0,
+                ..QueueSettings::default()
+            },
+        );
+        assert_eq!(cfg.max_tries, 1);
+        assert_eq!(cfg.max_parallelism, 1);
+        assert_eq!(cfg.initial_retry, Duration::from_secs(1));
+        assert!((cfg.retry_time_scale - 1.0).abs() < f64::EPSILON);
+        assert_eq!(cfg.max_delivery_time, Duration::from_secs(1));
+        assert_eq!(
+            cfg.location,
+            std::path::Path::new("/state").join("remote_queue")
+        );
+    }
+
+    #[test]
+    fn is_expired_falls_back_to_last_attempt_for_legacy_meta() {
+        use super::super::store::{now_unix, QueueMeta};
+
+        let cfg = QueueConfig::from_settings(
+            std::path::Path::new("/tmp"),
+            &QueueSettings {
+                max_delivery_secs: 60,
+                ..QueueSettings::default()
+            },
+        );
+        let now = now_unix();
+        let legacy = QueueMeta {
+            id: "legacy".into(),
+            mail_from: "a@b".into(),
+            rcpt_to: "c@d".into(),
+            tries_count: 1,
+            queued_at_unix: 0,
+            last_attempt_unix: now.saturating_sub(120),
+            next_attempt_unix: now,
+            last_error: None,
+        };
+        assert!(cfg.is_expired(&legacy));
+    }
+
+    #[test]
+    fn effective_queued_at_prefers_queued_at_unix() {
+        use super::super::store::QueueMeta;
+
+        let meta = QueueMeta {
+            id: "x".into(),
+            mail_from: "a@b".into(),
+            rcpt_to: "c@d".into(),
+            tries_count: 0,
+            queued_at_unix: 100,
+            last_attempt_unix: 200,
+            next_attempt_unix: 300,
+            last_error: None,
+        };
+        assert_eq!(meta.effective_queued_at(), 100);
+    }
 }

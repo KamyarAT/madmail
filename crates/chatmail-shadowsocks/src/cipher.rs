@@ -36,3 +36,30 @@ pub(crate) fn xray_method(name: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shadowsocks::crypto::CipherKind;
+
+    #[test]
+    fn parse_cipher_accepts_hyphen_and_underscore_aliases() {
+        assert_eq!(parse_cipher("AES-128-GCM"), Some(CipherKind::AES_128_GCM));
+        assert_eq!(parse_cipher("aes_256_gcm"), Some(CipherKind::AES_256_GCM));
+        assert_eq!(
+            parse_cipher(" chacha20-ietf-poly1305 "),
+            Some(CipherKind::CHACHA20_POLY1305)
+        );
+        assert_eq!(parse_cipher("rc4-md5"), None);
+    }
+
+    #[test]
+    fn xray_method_normalizes_to_hyphenated_names() {
+        assert_eq!(xray_method("AES_256_GCM"), Some("aes-256-gcm"));
+        assert_eq!(
+            xray_method("chacha20_ietf_poly1305"),
+            Some("chacha20-ietf-poly1305")
+        );
+        assert_eq!(xray_method("unknown"), None);
+    }
+}

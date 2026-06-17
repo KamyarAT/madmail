@@ -1,9 +1,14 @@
 //! TCP IMAP client for integration tests (Delta Chat / relay-ping style dialog).
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{DigitallySignedStruct, Error as RustlsError, SignatureScheme};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
 
 /// Minimal PGP/MIME body accepted by chatmail PGP policy (TDD `03-imap-server.md` APPEND).
 pub const PGP_MIME_BODY: &[u8] = b"From: u@test\r\nTo: u@test\r\nSubject: sync\r\n\
@@ -18,20 +23,110 @@ pub fn pgp_mime_for_user(user: &str) -> Vec<u8> {
         .into_bytes()
 }
 
+enum ImapStream {
+    Plain(TcpStream),
+    Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+}
+
+impl ImapStream {
+    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Plain(s) => s.write_all(buf).await,
+            Self::Tls(s) => s.write_all(buf).await,
+        }
+    }
+
+    async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(s) => s.read(buf).await,
+            Self::Tls(s) => s.read(buf).await,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SkipServerVerification;
+
+impl ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, RustlsError> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, RustlsError> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::ED25519,
+        ]
+    }
+}
+
+fn tls_connector() -> TlsConnector {
+    let config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
+        .with_no_client_auth();
+    TlsConnector::from(Arc::new(config))
+}
+
 /// IMAP4rev1 client over plain TCP (dev port 1143).
 pub struct ImapClient {
-    stream: TcpStream,
+    stream: ImapStream,
     transcript: String,
 }
 
 impl ImapClient {
     pub async fn connect(addr: std::net::SocketAddr) -> Self {
         let mut stream = TcpStream::connect(addr).await.expect("imap connect");
-        let greeting = Self::read_until_inner(&mut stream, "ready", Duration::from_secs(3)).await;
+        let greeting =
+            Self::read_plain_until_inner(&mut stream, "ready", Duration::from_secs(3)).await;
         Self {
-            stream,
+            stream: ImapStream::Plain(stream),
             transcript: greeting,
         }
+    }
+
+    /// IMAPS (TLS from first byte) with self-signed cert acceptance (Docker / IP relays).
+    pub async fn connect_tls_insecure(addr: std::net::SocketAddr) -> Self {
+        let tcp = TcpStream::connect(addr).await.expect("imap connect");
+        let server_name =
+            ServerName::try_from(addr.ip().to_string()).expect("imap tls server name");
+        let tls = tls_connector();
+        let stream = tls.connect(server_name, tcp).await.expect("tls");
+        let mut client = Self {
+            stream: ImapStream::Tls(Box::new(stream)),
+            transcript: String::new(),
+        };
+        let greeting = client
+            .read_until_inner("ready", Duration::from_secs(3))
+            .await;
+        client.transcript = greeting;
+        client
     }
 
     pub fn transcript(&self) -> &str {
@@ -50,7 +145,7 @@ impl ImapClient {
     pub async fn command(&mut self, line: &str) -> String {
         self.send_line(line).await;
         tokio::time::sleep(Duration::from_millis(30)).await;
-        let chunk = Self::read_until_command_done(&mut self.stream).await;
+        let chunk = self.read_until_command_done().await;
         self.transcript.push_str(&chunk);
         chunk
     }
@@ -61,7 +156,7 @@ impl ImapClient {
         tokio::time::sleep(Duration::from_millis(20)).await;
         self.stream.write_all(body).await.expect("literal");
         self.stream.write_all(b"\r\n").await.expect("literal crlf");
-        let chunk = Self::read_until_command_done(&mut self.stream).await;
+        let chunk = self.read_until_command_done().await;
         self.transcript.push_str(&chunk);
         chunk
     }
@@ -69,15 +164,16 @@ impl ImapClient {
     /// Start IDLE; returns after server `+ idling`.
     pub async fn idle_start(&mut self, tag: &str) -> String {
         self.send_line(&format!("{tag} IDLE")).await;
-        let chunk =
-            Self::read_until_inner(&mut self.stream, "+ idling", Duration::from_secs(3)).await;
+        let chunk = self
+            .read_until_inner("+ idling", Duration::from_secs(3))
+            .await;
         self.transcript.push_str(&chunk);
         chunk
     }
 
     /// Read until `needle` appears (unsolicited EXISTS during IDLE).
     pub async fn read_until(&mut self, needle: &str, timeout: Duration) -> String {
-        let chunk = Self::read_until_inner(&mut self.stream, needle, timeout).await;
+        let chunk = self.read_until_inner(needle, timeout).await;
         self.transcript.push_str(&chunk);
         chunk
     }
@@ -85,21 +181,51 @@ impl ImapClient {
     /// End IDLE with DONE (untagged or `tag DONE`).
     pub async fn idle_done(&mut self, tag: &str) -> String {
         self.send_line("DONE").await;
-        let chunk = Self::read_until_inner(
-            &mut self.stream,
-            &format!("{tag} OK"),
-            Duration::from_secs(3),
-        )
-        .await;
+        let chunk = self
+            .read_until_inner(&format!("{tag} OK"), Duration::from_secs(3))
+            .await;
         self.transcript.push_str(&chunk);
         chunk
     }
 
-    async fn read_until_command_done(stream: &mut TcpStream) -> String {
-        Self::read_until_inner(stream, "__cmd_done__", Duration::from_secs(3)).await
+    async fn read_until_command_done(&mut self) -> String {
+        self.read_until_inner("__cmd_done__", Duration::from_secs(3))
+            .await
     }
 
-    async fn read_until_inner(stream: &mut TcpStream, needle: &str, timeout: Duration) -> String {
+    async fn read_until_inner(&mut self, needle: &str, timeout: Duration) -> String {
+        let mut buf = [0u8; 65536];
+        tokio::time::timeout(timeout, async {
+            let mut acc = String::new();
+            for _ in 0..100 {
+                let n = self.stream.read(&mut buf).await.unwrap_or(0);
+                if n > 0 {
+                    acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if needle == "__cmd_done__" {
+                        if acc.contains(" completed\r\n")
+                            || acc.contains(" completed\n")
+                            || acc.contains("NO ")
+                            || acc.contains("BAD ")
+                        {
+                            return acc;
+                        }
+                    } else if acc.contains(needle) {
+                        return acc;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(15)).await;
+            }
+            acc
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    async fn read_plain_until_inner(
+        stream: &mut TcpStream,
+        needle: &str,
+        timeout: Duration,
+    ) -> String {
         let mut buf = [0u8; 65536];
         tokio::time::timeout(timeout, async {
             let mut acc = String::new();

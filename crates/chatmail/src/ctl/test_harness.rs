@@ -48,6 +48,28 @@ pub fn ctl_args(state_dir: &Path) -> Args {
 
 pub fn parse_cli(state_dir: &Path, subcommand: &[&str]) -> Cli {
     let config = state_dir.join("_test_no_config_.conf");
+    parse_cli_with_config(state_dir, &config, subcommand)
+}
+
+/// Minimal `maddy.conf` with Shadowsocks configured in the `chatmail` block.
+pub fn write_ss_test_config(dir: &Path) -> PathBuf {
+    let config = dir.join("test_ss.conf");
+    std::fs::write(
+        &config,
+        r#"
+chatmail tcp://0.0.0.0:80 {
+    mail_domain test.example
+    ss_addr 0.0.0.0:8388
+    ss_password config-pass
+    ss_cipher aes-128-gcm
+}
+"#,
+    )
+    .expect("write ss test config");
+    config
+}
+
+pub fn parse_cli_with_config(state_dir: &Path, config: &Path, subcommand: &[&str]) -> Cli {
     let mut argv = vec![
         "chatmail",
         "--state-dir",

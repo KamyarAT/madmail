@@ -15,10 +15,6 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use std::time::Duration;
-
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-
 use chatmail_types::is_ipv4_literal;
 use reqwest::Client;
 use tracing::debug;
@@ -110,7 +106,7 @@ pub async fn deliver_remote(ctx: &DeliveryContext, job: &OutboundJob) -> Deliver
             host_from_mxdeliv_url(url).unwrap_or_else(|| domain.clone())
         }
     };
-    match try_smtp_delivery(&smtp_host, job).await {
+    match crate::federation_smtp::deliver(&smtp_host, job).await {
         Ok(()) => {
             record_success(ctx, &domain, "SMTP");
             DeliveryOutcome::Success
@@ -308,91 +304,6 @@ fn lookup_keys(domain: &str) -> Vec<String> {
         keys.push(format!("[{stripped}]"));
     }
     keys
-}
-
-async fn try_smtp_delivery(host: &str, job: &OutboundJob) -> Result<(), String> {
-    use tokio::io::BufReader;
-    use tokio::net::TcpStream;
-
-    let connect_host = host.trim_matches(|c| c == '[' || c == ']');
-    let addr = format!("{connect_host}:25");
-    debug!(%addr, "federation: SMTP connect");
-
-    let stream = tokio::time::timeout(Duration::from_secs(30), TcpStream::connect(&addr))
-        .await
-        .map_err(|_| "smtp connect timeout".to_string())?
-        .map_err(|e| format!("smtp connect: {e}"))?;
-
-    let (read_half, mut write_half) = stream.into_split();
-    let mut reader = BufReader::new(read_half);
-    let mut line = String::new();
-
-    read_smtp_reply(&mut reader, &mut line, 220).await?;
-
-    smtp_write(&mut write_half, format!("EHLO {connect_host}\r\n")).await?;
-    read_smtp_reply(&mut reader, &mut line, 250).await?;
-
-    smtp_write(
-        &mut write_half,
-        format!("MAIL FROM:<{}>\r\n", job.mail_from),
-    )
-    .await?;
-    read_smtp_reply(&mut reader, &mut line, 250).await?;
-
-    smtp_write(&mut write_half, format!("RCPT TO:<{}>\r\n", job.rcpt_to)).await?;
-    read_smtp_reply(&mut reader, &mut line, 250).await?;
-
-    smtp_write(&mut write_half, "DATA\r\n").await?;
-    read_smtp_reply(&mut reader, &mut line, 354).await?;
-
-    smtp_write(&mut write_half, &job.data).await?;
-    if !job.data.ends_with(b"\r\n") {
-        smtp_write(&mut write_half, b"\r\n").await?;
-    }
-    smtp_write(&mut write_half, ".\r\n").await?;
-    read_smtp_reply(&mut reader, &mut line, 250).await?;
-
-    smtp_write(&mut write_half, "QUIT\r\n").await?;
-    let _ = read_smtp_reply(&mut reader, &mut line, 221).await;
-    Ok(())
-}
-
-async fn smtp_write<W: tokio::io::AsyncWrite + Unpin + ?Sized>(
-    w: &mut W,
-    data: impl AsRef<[u8]>,
-) -> Result<(), String> {
-    w.write_all(data.as_ref()).await.map_err(|e| e.to_string())
-}
-
-async fn read_smtp_reply<R: tokio::io::AsyncBufRead + Unpin>(
-    reader: &mut R,
-    line: &mut String,
-    expect_code: u16,
-) -> Result<(), String> {
-    loop {
-        line.clear();
-        let n = reader
-            .read_line(line)
-            .await
-            .map_err(|e| format!("smtp read: {e}"))?;
-        if n == 0 {
-            return Err("smtp: connection closed".into());
-        }
-        let trimmed = line.trim_end();
-        if trimmed.len() < 3 {
-            continue;
-        }
-        let code: u16 = trimmed[..3]
-            .parse()
-            .map_err(|_| format!("smtp bad reply: {trimmed}"))?;
-        let continued = trimmed.len() > 3 && trimmed.as_bytes()[3] == b'-';
-        if !continued {
-            if code == expect_code {
-                return Ok(());
-            }
-            return Err(format!("smtp expected {expect_code}, got: {trimmed}"));
-        }
-    }
 }
 
 #[cfg(test)]

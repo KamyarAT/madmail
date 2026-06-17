@@ -47,6 +47,8 @@ Reset via `store.reset(key)` → `POST /admin/settings/{key}` with `{ "action": 
 | `turn_realm` | TURN realm |
 | `turn_secret` | TURN shared secret |
 | `turn_relay_ip` | TURN relay IP |
+| `turn_relay_port_min` | TURN relay UDP port range start (default `49152`) |
+| `turn_relay_port_max` | TURN relay UDP port range end (default `65535`) |
 | `turn_ttl` | TURN credential TTL (number) |
 | `iroh_relay_url` | Iroh relay URL |
 | `dclogin_imap_security` | `ssl` / `starttls` / `default` |

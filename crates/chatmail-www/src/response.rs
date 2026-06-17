@@ -52,3 +52,44 @@ pub fn options_preflight() -> Response {
     set_cors(resp.headers_mut());
     resp
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::body::to_bytes;
+    use axum::http::{HeaderValue, StatusCode};
+    use serde_json::json;
+
+    use super::*;
+
+    fn cors_origin(resp: &Response) -> &HeaderValue {
+        resp.headers()
+            .get("Access-Control-Allow-Origin")
+            .expect("cors header")
+    }
+
+    #[tokio::test]
+    async fn json_ok_includes_cors_and_body() {
+        let resp = json_ok(StatusCode::OK, &json!({"ok": true}));
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(cors_origin(&resp), "*");
+        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body.as_ref(), br#"{"ok":true}"#);
+    }
+
+    #[tokio::test]
+    async fn json_err_includes_cors_and_error_field() {
+        let resp = json_err(StatusCode::BAD_REQUEST, "bad input");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(cors_origin(&resp), "*");
+        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body.as_ref(), br#"{"error":"bad input"}"#);
+    }
+
+    #[tokio::test]
+    async fn options_preflight_is_no_content_with_cors() {
+        let resp = options_preflight();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        assert_eq!(cors_origin(&resp), "*");
+        assert!(resp.headers().get("Access-Control-Allow-Methods").is_some());
+    }
+}

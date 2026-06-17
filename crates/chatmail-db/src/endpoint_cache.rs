@@ -119,3 +119,79 @@ pub async fn remove_endpoint_override(pool: &DbPool, lookup_key: &str) -> Result
     };
     Ok(affected > 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::init_memory_db;
+
+    #[tokio::test]
+    async fn set_get_list_endpoint_override() {
+        let pool = init_memory_db().await.unwrap();
+        set_endpoint_override(&pool, "mx.example.org", "relay.other.org", "test")
+            .await
+            .unwrap();
+
+        let row = get_endpoint_override(&pool, "mx.example.org")
+            .await
+            .unwrap()
+            .expect("override exists");
+        assert_eq!(row.lookup_key, "mx.example.org");
+        assert_eq!(row.target_host, "relay.other.org");
+        assert_eq!(row.comment.as_deref(), Some("test"));
+
+        let all = list_endpoint_overrides(&pool).await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].lookup_key, "mx.example.org");
+    }
+
+    #[tokio::test]
+    async fn set_endpoint_override_upserts_and_trims() {
+        let pool = init_memory_db().await.unwrap();
+        set_endpoint_override(&pool, "  key  ", "  host  ", "first")
+            .await
+            .unwrap();
+        set_endpoint_override(&pool, "key", "new-host", "updated")
+            .await
+            .unwrap();
+
+        let row = get_endpoint_override(&pool, "key").await.unwrap().unwrap();
+        assert_eq!(row.lookup_key, "key");
+        assert_eq!(row.target_host, "new-host");
+        assert_eq!(row.comment.as_deref(), Some("updated"));
+
+        let all = list_endpoint_overrides(&pool).await.unwrap();
+        assert_eq!(all.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn set_endpoint_override_rejects_empty_fields() {
+        let pool = init_memory_db().await.unwrap();
+        let err = set_endpoint_override(&pool, " ", "host", "")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("LOOKUP_KEY"));
+        let err = set_endpoint_override(&pool, "key", "", "")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("TARGET_HOST"));
+    }
+
+    #[tokio::test]
+    async fn remove_endpoint_override_deletes_row() {
+        let pool = init_memory_db().await.unwrap();
+        set_endpoint_override(&pool, "gone", "host", "")
+            .await
+            .unwrap();
+        assert!(super::remove_endpoint_override(&pool, "gone")
+            .await
+            .unwrap());
+        assert!(!super::remove_endpoint_override(&pool, "gone")
+            .await
+            .unwrap());
+        assert!(get_endpoint_override(&pool, "gone")
+            .await
+            .unwrap()
+            .is_none());
+    }
+}

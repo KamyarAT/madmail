@@ -452,3 +452,299 @@ pub(crate) async fn delete_uid(st: &WwwState, user: &str, uid: u32) -> Result<()
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::body::to_bytes;
+    use axum::http::{Request, StatusCode};
+    use chatmail_auth::hash_password;
+    use chatmail_config::AppConfig;
+    use chatmail_db::{init_memory_db, passwords, set_setting, settings_keys};
+    use chatmail_state::AppState;
+    use chatmail_storage::{write_blob, InboxEntry};
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::www_router;
+
+    const USER: &str = "u@x.org";
+    const PASS: &str = "secret";
+
+    fn sample_message() -> Vec<u8> {
+        b"From: Alice <alice@example.org>\r\n\
+          To: Bob <bob@example.org>\r\n\
+          Subject: WebIMAP test\r\n\
+          Date: Thu, 1 Feb 2024 10:00:00 +0000\r\n\
+          Message-ID: <webimap-test@example.org>\r\n\
+          Content-Type: text/plain; charset=utf-8\r\n\
+          \r\n\
+          Hello from WebIMAP tests\r\n"
+            .to_vec()
+    }
+
+    async fn test_www_state(webimap_enabled: bool) -> (WwwState, tempfile::TempDir) {
+        let pool = init_memory_db().await.unwrap();
+        if webimap_enabled {
+            set_setting(&pool, settings_keys::WEBIMAP_ENABLED, "true")
+                .await
+                .unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::default();
+        let app = Arc::new(AppState::with_quota_and_message_limit(
+            dir.path(),
+            chatmail_config::DEFAULT_QUOTA_BYTES,
+            &cfg,
+            pool.clone(),
+        ));
+        let hash = hash_password(PASS).unwrap();
+        passwords::create_user(&pool, USER, &hash).await.unwrap();
+        app.auth.hydrate(&pool).await.unwrap();
+        let st = WwwState::new(pool, app, cfg);
+        (st, dir)
+    }
+
+    async fn seed_inbox(st: &WwwState) {
+        write_blob(&st.app.mailbox_store, USER, "msg-1", &sample_message())
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn parse_envelope_extracts_headers_and_body() {
+        let raw = sample_message();
+        let (env, body) = parse_envelope(&raw);
+        assert_eq!(env.subject, "WebIMAP test");
+        assert!(env.message_id.contains("webimap-test@example.org"));
+        assert!(!env.date.is_empty());
+        assert_eq!(env.from.len(), 1);
+        assert_eq!(env.from[0].mailbox, "alice");
+        assert_eq!(env.from[0].host, "example.org");
+        assert_eq!(env.to.len(), 1);
+        assert!(body.contains("Hello from WebIMAP tests"));
+    }
+
+    #[test]
+    fn entry_to_summary_uses_envelope_metadata() {
+        let raw = sample_message();
+        let entry = InboxEntry {
+            uid: 42,
+            msg_id: "msg-1".into(),
+            size: raw.len() as u64,
+        };
+        let summary = entry_to_summary(&entry, &raw);
+        assert_eq!(summary.uid, 42);
+        assert_eq!(summary.seq_num, 42);
+        assert_eq!(summary.flags, vec!["\\Seen"]);
+        assert_eq!(summary.envelope.subject, "WebIMAP test");
+    }
+
+    #[tokio::test]
+    async fn find_entry_locates_uid() {
+        let entries = vec![
+            InboxEntry {
+                uid: 1,
+                msg_id: "a".into(),
+                size: 1,
+            },
+            InboxEntry {
+                uid: 2,
+                msg_id: "b".into(),
+                size: 2,
+            },
+        ];
+        let found = find_entry(&entries, 2).await.unwrap();
+        assert_eq!(found.msg_id, "b");
+        assert!(find_entry(&entries, 99).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn summaries_since_and_delete_uid_roundtrip() {
+        let (st, _dir) = test_www_state(true).await;
+        seed_inbox(&st).await;
+
+        let summaries = summaries_since(&st, USER, 0).await.unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].envelope.subject, "WebIMAP test");
+
+        let uid = summaries[0].uid;
+        delete_uid(&st, USER, uid).await.unwrap();
+        assert!(summaries_since(&st, USER, 0).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mailboxes_disabled_returns_not_found() {
+        let (st, _dir) = test_www_state(false).await;
+        let app = www_router(st);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/webimap/mailboxes")
+                    .header("x-email", USER)
+                    .header("x-password", PASS)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn mailboxes_lists_inbox() {
+        let (st, _dir) = test_www_state(true).await;
+        seed_inbox(&st).await;
+        let app = www_router(st);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/webimap/mailboxes")
+                    .header("x-email", USER)
+                    .header("x-password", PASS)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let inbox = body.as_array().unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0]["name"], "INBOX");
+        assert_eq!(inbox[0]["messages"], 1);
+    }
+
+    #[tokio::test]
+    async fn messages_and_message_get_return_mail() {
+        let (st, _dir) = test_www_state(true).await;
+        seed_inbox(&st).await;
+        let app = www_router(st);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/webimap/messages?wait=0")
+                    .header("x-email", USER)
+                    .header("x-password", PASS)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let msgs: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let msgs = msgs.as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        let uid = msgs[0]["uid"].as_u64().unwrap() as u32;
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/webimap/message/{uid}"))
+                    .header("x-email", USER)
+                    .header("x-password", PASS)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let detail: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert!(detail["body"]
+            .as_str()
+            .unwrap()
+            .contains("Hello from WebIMAP tests"));
+    }
+
+    #[tokio::test]
+    async fn message_delete_removes_message() {
+        let (st, _dir) = test_www_state(true).await;
+        seed_inbox(&st).await;
+        let app = www_router(st);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/webimap/messages?wait=0")
+                    .header("x-email", USER)
+                    .header("x-password", PASS)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let msgs: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let uid = msgs.as_array().unwrap()[0]["uid"].as_u64().unwrap() as u32;
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/webimap/message/{uid}"))
+                    .header("x-email", USER)
+                    .header("x-password", PASS)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/webimap/messages?wait=0")
+                    .header("x-email", USER)
+                    .header("x-password", PASS)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let msgs: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert!(msgs.as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn message_flags_accepts_valid_ops() {
+        let (st, _dir) = test_www_state(true).await;
+        let app = www_router(st);
+        for op in ["add", "remove", "set"] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/webimap/message/flags")
+                        .header("x-email", USER)
+                        .header("x-password", PASS)
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(
+                            serde_json::json!({
+                                "mailbox": "INBOX",
+                                "uid": 1,
+                                "flags": ["\\Seen"],
+                                "op": op
+                            })
+                            .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
+    }
+}

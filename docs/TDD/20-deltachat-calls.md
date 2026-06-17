@@ -117,7 +117,107 @@ turn udp://0.0.0.0:3478 tcp://0.0.0.0:3478 {
 
 **Normal operation:** `test_force_relay` **off**, no `turn-test.conf` systemd drop-in ([turn-test.md](../../turn-test.md)).
 
-**Firewall:** UDP **3478** and UDP **49152–65535** (or full ephemeral range used by the OS) to the relay IP (VPS + cloud security group).
+---
+
+## Network exposure (firewall)
+
+Madmail’s embedded TURN uses **two UDP port groups**. Both must be reachable from the internet on your **public relay IP** (`turn_server` / `turn_relay_ip` / `$(public_ip)`), not only on localhost.
+
+| Purpose | Protocol | Ports | Default | Configurable? |
+|---------|----------|-------|---------|-------------|
+| **TURN/STUN control** | UDP | `3478` | `3478` | Yes — `turn_port` in config or admin `__TURN_PORT__` |
+| **TURN relay (media)** | UDP | `49152–65535` | `49152–65535` | Yes — `relay_port_min` / `relay_port_max` in config or admin `turn_relay_port_min` / `turn_relay_port_max` |
+
+The server logs this at startup (`runner.rs` / `turn_boot.rs`): open UDP on the control port **and** relay ports **49152–65535**.
+
+### Host firewall (Linux)
+
+**ufw:**
+
+```bash
+ufw allow 3478/udp comment 'madmail TURN/STUN'
+ufw allow 49152:65535/udp comment 'madmail TURN relay'
+```
+
+**firewalld:**
+
+```bash
+firewall-cmd --permanent --add-port=3478/udp
+firewall-cmd --permanent --add-port=49152-65535/udp
+firewall-cmd --reload
+```
+
+**nftables** (minimal example — adapt to your ruleset):
+
+```nft
+udp dport 3478 accept
+udp dport 49152-65535 accept
+```
+
+### Cloud / VPS security groups
+
+Open the same UDP ranges in your provider’s security group or network ACL:
+
+- Inbound UDP **3478** → server public IP
+- Inbound UDP **49152–65535** → server public IP
+
+If you changed `turn_port` (e.g. `4478`), open that port instead of `3478`.
+
+### Docker note
+
+Bridged containers need the same ports published to the host; set `turn_relay_ip` / `turn_server` to the **host’s public IP**, not the container IP. See [Docker deployment guide — TURN (calls)](../guide/docker.md#turn-calls) for `docker-compose` examples and `network_mode: host`.
+
+---
+
+## Docker and Docker Compose
+
+TURN runs inside the same `madmail` container as mail/IMAP. For calls to work through Docker you must expose both UDP port groups **and** advertise the correct public relay address.
+
+### Port mapping
+
+Add to `docker run` or `docker-compose.yml` (default control port `3478`):
+
+```yaml
+ports:
+  - "3478:3478/udp"                 # TURN/STUN control
+  - "49152-65535:49152-65535/udp"   # TURN relay (WebRTC media)
+```
+
+If `turn_port` is not `3478`, map your configured port instead.
+
+### Relay IP in config
+
+Clients read the relay address from IMAP metadata. In Docker, ensure config matches the **host public IP**:
+
+```text
+turn_server 203.0.113.50
+turn udp://0.0.0.0:3478 {
+    relay_ip 203.0.113.50
+}
+```
+
+(`203.0.113.50` is [RFC 5737](https://datatracker.ietf.org/doc/html/rfc5737) documentation space — use your real public IP.)
+
+### `network_mode: host` (recommended for production calls)
+
+Mapping all relay ports (`49152–65535`) through Docker’s userland proxy is heavy and can be fragile under load. For reliable voice/video, prefer **host networking** so TURN binds directly on the host:
+
+```yaml
+services:
+  madmail:
+    image: ghcr.io/themadorg/madmail:latest
+    network_mode: host
+    cap_add:
+      - NET_BIND_SERVICE
+    volumes:
+      - /var/lib/madmail:/var/lib/madmail
+      - /etc/madmail:/etc/madmail:ro
+      - /run/madmail:/run/madmail
+```
+
+With host mode you still need the host firewall / security-group rules above; you do **not** need a `ports:` section for TURN.
+
+Full Docker workflow (install, volumes, TLS): [Docker deployment guide](../guide/docker.md).
 
 ---
 

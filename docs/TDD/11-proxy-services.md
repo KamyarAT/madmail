@@ -264,7 +264,7 @@ port-range = "49152..65535"
 | `GETMETADATA` TURN line | **Done** — `chatmail-imap` + `TurnDiscovery` |
 | Shared secret alignment | **Done** — single `turn_secret` → IMAP HMAC + webrtc-rs TURN auth |
 | `turn_enable` + admin toggle | **Done** — `__TURN_ENABLED__` + `/admin/services/turn` |
-| Relay reachability | Document firewall: TURN port UDP+TCP **and** relay UDP range |
+| Relay reachability | **Done** — UDP **3478** + relay **49152–65535** ([20-deltachat-calls.md](20-deltachat-calls.md), [docker.md](../guide/docker.md#turn-calls)) |
 | TCP relay | Phase 2 unless Desktop requires it (Madmail also limited) |
 | `turn_prefer_tls` / `turns` key | Phase 2: separate port in metadata or second key with `turns:` URLs |
 | WebRTC relay datapath | **Done** — webrtc-rs TURN with real UDP bind; see [20-deltachat-calls.md](20-deltachat-calls.md) |
@@ -376,6 +376,7 @@ Full step-by-step plan: **[`docs/plans/b9/`](../plans/b9/README.md)**.
 | **Smoke** | STUN Binding, TURN Allocate with issued creds | `cargo test -p chatmail-integration turn_smoke` | Every PR |
 | **Integration** | IMAP `GETMETADATA` + cred validates on TURN | `tests/turn_e2e.rs` + `spawn_mail_servers` | Every PR |
 | **E2E (relay-ping style)** | Raw TCP IMAP dialog like [`tests/support/imap_client.rs`](../../tests/support/imap_client.rs); SMTP optional | `cargo test -p chatmail-integration turn_imap` | Every PR |
+| **E2E (Docker + relay-ping)** | Local image, `relay-ping` connectivity + TURN allocate in configured relay range | `make test-docker-turn-e2e` ([`scripts/docker-turn-e2e.sh`](../../scripts/docker-turn-e2e.sh)) | Manual / pre-release |
 | **E2E (Core)** | `update_metadata` → `ice_servers()` JSON | `scripts/core-e2e-turn.sh` + [`context/core` `chatmail_transport`](../../context/core/src/tests/chatmail_transport.rs) | Nightly or manual |
 
 ### Unit ([RFC 5464](RFC/rfc5464.txt) + [TURN REST draft](RFC/draft-uberti-behave-turn-rest-00.txt))
@@ -395,7 +396,8 @@ Full step-by-step plan: **[`docs/plans/b9/`](../plans/b9/README.md)**.
 1. Extend [`tests/support/mod.rs`](../../tests/support/mod.rs) `spawn_mail_servers` with TURN listener + `turn_enable` settings.
 2. Replace stub in [`tests/imap_e2e.rs`](../../tests/imap_e2e.rs): `GETMETADATA "" /shared/vendor/deltachat/turn` (not `/private/turn/relay`).
 3. Verify returned line authenticates on embedded turn-rs.
-4. Optional: [`context/relay-ping`](../../context/relay-ping) `imapcheck` against running `make run-bg` with TURN enabled.
+4. Docker: [`scripts/docker-turn-e2e.sh`](../../scripts/docker-turn-e2e.sh) — `relay-ping` against a container plus [`tests/docker_turn_e2e.rs`](../../tests/docker_turn_e2e.rs) UDP allocate probe (`make test-docker-turn-e2e`).
+5. Optional: [`context/relay-ping`](../../context/relay-ping) `imapcheck` against running `make run-bg` with TURN enabled.
 
 ### E2E (Delta Chat Core)
 

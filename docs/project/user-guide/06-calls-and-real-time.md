@@ -42,7 +42,12 @@ In the config or admin interface you will see options like:
 
 Most of the time you leave these at the defaults. The server will advertise the service to clients that support it.
 
-You do need to make sure the TURN ports are reachable from the internet (usually UDP ports in addition to the normal TCP mail ports). The admin interface and documentation will tell you which ones.
+You do need to make sure the TURN ports are reachable from the internet (UDP, in addition to the normal TCP mail ports):
+
+- **UDP 3478** — TURN/STUN control (default; configurable via `turn_port`)
+- **UDP 49152–65535** — TURN relay for call media (default range; configurable in admin Services)
+
+Open these on the host firewall and cloud security group. For Docker, see [Docker deployment guide — TURN](../../guide/docker.md#turn-calls). Full detail: [Delta Chat calls (TDD)](../../TDD/20-deltachat-calls.md).
 
 ## Privacy Considerations for Calls
 
@@ -86,7 +91,7 @@ This is one of the big quality-of-life improvements of running on a proper chatm
 
 If voice/video calls are not working well:
 
-- Check that the TURN-related ports are open in the firewall.
+- Check that UDP **3478** and UDP **49152–65535** are open in the firewall (and mapped in Docker if you use containers).
 - Make sure TURN is enabled in the admin settings.
 - Look at the dedicated TURN E2E tests and debug scripts that come with the project (they are very useful for operators).
 - Sometimes forcing “relay only” mode in testing helps diagnose whether the problem is peer-to-peer connectivity or the relay itself.
