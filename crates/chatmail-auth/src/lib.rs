@@ -20,7 +20,10 @@ pub mod jit;
 pub mod normalize;
 pub mod validate;
 
-pub use hash::{hash_password, is_importable_hash, verify_password};
-pub use jit::{authenticate, AuthContext};
+pub use hash::{
+    hash_password, is_importable_hash, needs_default_hash_upgrade, verify_password,
+    DEFAULT_HASH_PREFIX,
+};
+pub use jit::{authenticate, schedule_hash_upgrade_if_needed, AuthContext};
 pub use normalize::normalize_username;
 pub use validate::validate_localpart_and_password;

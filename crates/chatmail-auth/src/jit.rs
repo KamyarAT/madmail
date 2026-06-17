@@ -19,13 +19,13 @@ use std::sync::Arc;
 
 use chatmail_config::CredentialPolicy;
 use chatmail_db::{passwords, registration_tokens, DbPool, FirstLoginOutcome};
-use chatmail_state::AppState;
+use chatmail_state::{AppState, AuthCache};
 use chatmail_storage::MailboxStore;
 use chatmail_types::{ChatmailError, Result};
 
 use chatmail_types::validate_login_domain;
 
-use crate::hash::{hash_password, verify_password};
+use crate::hash::{hash_password, needs_default_hash_upgrade, verify_password};
 use crate::normalize::normalize_username;
 use crate::validate::validate_localpart_and_password;
 
@@ -52,9 +52,27 @@ fn password_sha256(password: &str) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Verify `password` against the stored `hash`, short-circuiting via the in-memory auth cache and
-/// otherwise running the (CPU-heavy) bcrypt/argon2 check on a blocking thread so it never stalls
-/// the async runtime that is concurrently servicing other clients' IMAP IDLE/FETCH.
+/// Re-hash with the default algorithm after a successful legacy login (Madmail Go pass_table).
+pub fn schedule_hash_upgrade_if_needed(
+    pool: DbPool,
+    auth: Arc<AuthCache>,
+    user: String,
+    password: String,
+    stored_hash: String,
+) {
+    if !needs_default_hash_upgrade(&stored_hash) {
+        return;
+    }
+    tokio::spawn(async move {
+        if let Ok(new_hash) = hash_password(&password) {
+            let _ = passwords::create_user(&pool, &user, &new_hash).await;
+            auth.insert(&user, &new_hash);
+        }
+    });
+}
+
+/// Verify `password` against the stored `hash`, short-circuiting via the in-memory auth cache.
+/// Legacy bcrypt/argon2 checks run on a blocking thread so they never stall IMAP IDLE/FETCH.
 async fn verify_cached(
     ctx: &AuthContext,
     user: &str,
@@ -65,12 +83,24 @@ async fn verify_cached(
     if ctx.state.auth.check_verified(user, &pw_sha) {
         return Ok(true);
     }
-    let pw = password.to_string();
-    let ok = tokio::task::spawn_blocking(move || verify_password(&pw, &hash))
-        .await
-        .map_err(|_| ChatmailError::AuthFailed)??;
+    let ok = if needs_default_hash_upgrade(&hash) {
+        let pw = password.to_string();
+        let legacy_hash = hash.clone();
+        tokio::task::spawn_blocking(move || verify_password(&pw, &legacy_hash))
+            .await
+            .map_err(|_| ChatmailError::AuthFailed)??
+    } else {
+        verify_password(password, &hash)?
+    };
     if ok {
         ctx.state.auth.record_verified(user.to_string(), pw_sha);
+        schedule_hash_upgrade_if_needed(
+            ctx.pool.clone(),
+            Arc::clone(&ctx.state.auth),
+            user.to_string(),
+            password.to_string(),
+            hash,
+        );
     }
     Ok(ok)
 }
@@ -273,6 +303,25 @@ mod tests {
     }
 
     /// Concurrent JIT logins for the same username must create a single account.
+    #[tokio::test]
+    async fn legacy_bcrypt_hash_upgraded_on_login() {
+        let (ctx, _dir) = ctx_with_jit(true).await;
+        let bcrypt_hash = bcrypt::hash("x", 4).unwrap();
+        let legacy = format!("bcrypt:{bcrypt_hash}");
+        passwords::create_user(&ctx.pool, "legacy@example.org", &legacy)
+            .await
+            .unwrap();
+        ctx.state.auth.insert("legacy@example.org", &legacy);
+        authenticate(&ctx, "legacy@example.org", "x").await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let stored = passwords::get_user_hash(&ctx.pool, "legacy@example.org")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(stored.starts_with(crate::hash::DEFAULT_HASH_PREFIX));
+        assert!(ctx.state.auth.get_hash("legacy@example.org").as_deref() == Some(stored.as_str()));
+    }
+
     #[tokio::test]
     async fn jit_coalesces_concurrent_creates_for_same_user() {
         let (ctx, _dir) = ctx_with_jit(true).await;

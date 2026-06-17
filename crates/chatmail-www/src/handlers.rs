@@ -22,7 +22,9 @@ use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::Json;
-use chatmail_auth::{hash_password, normalize_username, verify_password};
+use chatmail_auth::{
+    hash_password, normalize_username, schedule_hash_upgrade_if_needed, verify_password,
+};
 use chatmail_config::{build_dclogin_link, DcloginMailSettings};
 use chatmail_db::{get_bool_setting, passwords, registration_tokens, settings_keys};
 use chatmail_delivery::DeliveryContext;
@@ -411,7 +413,7 @@ pub async fn websmtp_deliver(
 
 pub(crate) async fn webimap_authenticate(
     app: &chatmail_state::AppState,
-    _pool: &chatmail_db::DbPool,
+    pool: &chatmail_db::DbPool,
     headers: &HeaderMap,
 ) -> Result<String, Response> {
     let email = headers
@@ -445,6 +447,14 @@ pub(crate) async fn webimap_authenticate(
             "invalid credentials",
         ));
     }
+
+    schedule_hash_upgrade_if_needed(
+        pool.clone(),
+        std::sync::Arc::clone(&app.auth),
+        user.clone(),
+        password.to_string(),
+        hash,
+    );
 
     Ok(user)
 }

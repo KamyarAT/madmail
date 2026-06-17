@@ -44,9 +44,12 @@ pub fn should_disable_logging(log_target: Option<&str>, debug: bool) -> bool {
 }
 
 /// Initialize a reloadable `tracing` subscriber. Returns a handle to toggle verbosity.
+///
+/// When `debug` is true in madmail.conf, tracing runs at `debug` regardless of a generic
+/// `RUST_LOG=info` systemd drop-in (operators can still narrow via `RUST_LOG` when debug is off).
 pub fn init_logging(debug: bool) -> LogReloadHandle {
     let filter = if debug {
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"))
+        EnvFilter::new("debug")
     } else {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"))
     };
